@@ -1,1441 +1,946 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Quản Lý Quán Nước</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 
-    ======================================================
-    HƯỚNG DẪN TÍCH HỢP FIREBASE:
-    1. Tạo project trên https://console.firebase.google.com
-    2. Bật Realtime Database (hoặc Firestore)
-    3. Bật Authentication (Anonymous)
-    4. Thay toàn bộ phần FIREBASE CONFIG bên dưới
-    5. Tìm comment "// FIREBASE:" để biết chỗ cần thay thế
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CHECK GIÁ XE ĐIỆN — Bảng tính giá lăn bánh</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #081a1c;
+    --bg-2: #0d2427;
+    --panel: #0f2a2d;
+    --panel-2: #123338;
+    --line: rgba(184, 255, 61, 0.14);
+    --line-soft: rgba(234, 246, 244, 0.09);
+    --text: #eaf6f4;
+    --text-dim: #8fb0ac;
+    --text-faint: #587471;
+    --accent: #b8ff3d;
+    --accent-dim: #6f8c34;
+    --amber: #ffb238;
+    --red: #ff6b5e;
+  }
 
-    CẤU TRÚC DỮ LIỆU:
-    - orders: các đơn hàng ĐANG HIỂN THỊ cho Admin quản lý (chưa reset). Mỗi
-      món trong giỏ khi khách đặt sẽ thành 1 record, nhiều record có cùng
-      "orderId" sẽ được Admin gộp lại thành 1 đơn hàng để xem chi tiết.
-    - revenueArchive: kho lưu trữ doanh thu theo ngày { 'YYYY-MM-DD': { revenue,
-      orderCount, cupCount } }. Khi admin bấm Reset, doanh thu của các đơn
-      hàng hiện tại được CỘNG DỒN vào đây trước khi xóa "orders" -> nhờ vậy
-      báo cáo doanh thu theo ngày/tháng không bao giờ bị mất dù đơn hàng đã
-      bị xóa khỏi danh sách quản lý.
-    - currentSessionId: số thứ tự phiên đặt hàng đang hoạt động. Tăng lên 1
-      mỗi khi admin bấm "Reset Đơn Hàng Mới".
-    - resetSessions: lịch sử các phiên đã reset, mỗi phần tử gồm
-      { id, resetAt, orderCount, revenue, orders } — "orders" là bản sao chi
-      tiết các đơn hàng của phiên đó, dùng để hiển thị "Lịch sử phiên" dù
-      node "orders" chính đã bị xóa.
-    => Nhờ cấu trúc này, reset sẽ XÓA danh sách đơn hàng hiện tại khỏi màn
-    hình quản lý của Admin, nhưng doanh thu theo ngày/tháng và lịch sử chi
-    tiết từng phiên vẫn xem lại được bình thường.
-    ======================================================
-    -->
+  *{ box-sizing: border-box; }
 
-    <!-- FIREBASE SDK - ĐÃ KÍCH HOẠT -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-        import { getDatabase, ref, set, get, onValue, push, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  html, body{
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Be Vietnam Pro', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
 
-        const firebaseConfig = {
-            apiKey: "AIzaSyCSj4urEOl6Xhwx04crPslgMwimTisEH7U",
-            authDomain: "order-e9771.firebaseapp.com",
-            // ⚠️ CẦN ĐIỀN: mở Firebase Console > Realtime Database > trang dữ liệu,
-            // copy URL hiển thị ở trên cùng (dạng https://order-e9771-default-rtdb.<region>.firebasedatabase.app)
-            // và dán vào đây. Thiếu dòng này thì mọi thao tác đọc/ghi sẽ lỗi.
-            databaseURL: "PASTE_DATABASE_URL_HERE",
-            projectId: "order-e9771",
-            storageBucket: "order-e9771.firebasestorage.app",
-            messagingSenderId: "199510410776",
-            appId: "1:199510410776:web:5d90fee85778b40ea9656d"
-        };
-        const app = initializeApp(firebaseConfig);
-        window.db = getDatabase(app);
-        window.fbRef = ref;
-        window.fbSet = set;
-        window.fbGet = get;
-        window.fbOnValue = onValue;
-        window.fbPush = push;
-        window.fbRemove = remove;
+  body{
+    background-image:
+      radial-gradient(circle at 15% 0%, rgba(184,255,61,0.08), transparent 45%),
+      radial-gradient(circle at 100% 30%, rgba(23,233,192,0.06), transparent 40%);
+    min-height: 100vh;
+  }
 
-        // Đăng nhập ẩn danh (cần bật "Anonymous" trong Firebase Console > Authentication)
-        const auth = getAuth(app);
-        signInAnonymously(auth).catch((err) => console.error('Lỗi đăng nhập ẩn danh:', err));
+  ::selection{ background: var(--accent); color: #08120a; }
 
-        window.FIREBASE_READY = true;
+  /* ---------- Header ---------- */
+  header{
+    padding: 28px clamp(16px, 4vw, 56px) 18px;
+    border-bottom: 1px solid var(--line-soft);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .brand{ display: flex; align-items: center; gap: 12px; }
+  .plug{
+    width: 38px; height: 38px;
+    border-radius: 10px;
+    background: linear-gradient(145deg, var(--accent), #6fe0b8);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 24px rgba(184,255,61,0.35);
+    flex-shrink: 0;
+  }
+  .plug svg{ width: 20px; height: 20px; }
+  .brand-text .eyebrow{
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+  .brand-text h1{
+    margin: 2px 0 0;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: clamp(20px, 2.6vw, 26px);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  header .sub{ font-size: 13px; color: var(--text-dim); max-width: 380px; text-align: right; line-height: 1.5; }
 
-        // Lắng nghe đơn hàng realtime
-        // LƯU Ý: node 'orders' chỉ chứa các đơn hàng ĐANG hiển thị cho Admin quản lý.
-        // Khi admin bấm Reset, node này sẽ bị xóa (set null) sau khi doanh thu đã
-        // được cộng dồn vào 'revenueArchive'.
-        onValue(ref(window.db, 'orders'), (snapshot) => {
-            orders = snapshot.val() ? Object.values(snapshot.val()) : [];
-            if (isAdminLoggedIn) renderAdminDashboard();
-            renderSharedOrderView();
-        });
+  /* ---------- Tabs ---------- */
+  .tabs{
+    display: flex;
+    gap: 6px;
+    max-width: 1180px;
+    margin: 24px auto 0;
+    padding: 0 clamp(16px, 4vw, 56px);
+  }
+  .tab-btn{
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    background: transparent;
+    border: 1px solid var(--line-soft);
+    color: var(--text-dim);
+    padding: 10px 18px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  .tab-btn:hover{ border-color: var(--accent-dim); color: var(--text); }
+  .tab-btn.active{ background: var(--accent); color: #08120a; border-color: var(--accent); font-weight: 700; }
+  .tab-btn:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
 
-        // Lắng nghe phiên đơn hàng hiện tại (tăng lên mỗi lần admin reset)
-        onValue(ref(window.db, 'currentSessionId'), (snapshot) => {
-            if (snapshot.val()) {
-                currentSessionId = snapshot.val();
-                updateSessionLabel();
-                renderSharedOrderView();
-                if (isAdminLoggedIn) renderAdminDashboard();
-            } else {
-                // Chưa có dữ liệu trên Firebase -> khởi tạo lần đầu
-                set(ref(window.db, 'currentSessionId'), currentSessionId);
-            }
-        });
+  .view{ display: none; }
+  .view.active{ display: block; }
 
-        // Lắng nghe lịch sử các phiên đã reset
-        onValue(ref(window.db, 'resetSessions'), (snapshot) => {
-            resetSessions = snapshot.val() ? Object.values(snapshot.val()) : [];
-        });
+  /* ---------- Layout ---------- */
+  .wrap{
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 24px clamp(16px, 4vw, 56px) 80px;
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: 28px;
+    align-items: start;
+  }
+  @media (max-width: 880px){ .wrap{ grid-template-columns: 1fr; } }
 
-        // Lắng nghe kho lưu trữ doanh thu theo ngày (không bị mất khi reset đơn hàng)
-        onValue(ref(window.db, 'revenueArchive'), (snapshot) => {
-            revenueArchive = snapshot.val() || {};
-            if (isAdminLoggedIn) renderAdminDashboard();
-        });
+  .admin-wrap{
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 24px clamp(16px, 4vw, 56px) 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
 
-        // Lắng nghe menu realtime
-        onValue(ref(window.db, 'menu'), (snapshot) => {
-            if (snapshot.val()) {
-                menu = Object.values(snapshot.val());
-                initMenuDropdowns();
-                if (isAdminLoggedIn) renderMenuTable();
-            } else {
-                // Chưa có menu trên Firebase -> khởi tạo bằng menu mặc định
-                set(ref(window.db, 'menu'), menu);
-            }
-        });
+  .card{
+    background: linear-gradient(180deg, var(--panel), var(--bg-2));
+    border: 1px solid var(--line-soft);
+    border-radius: 16px;
+    padding: 24px;
+  }
 
-        // Lắng nghe tên quán
-        onValue(ref(window.db, 'shopName'), (snapshot) => {
-            if (snapshot.val()) {
-                shopName = snapshot.val();
-                document.getElementById('shop-name-display').innerText = shopName;
-                document.getElementById('shop-name-input').value = shopName;
-            } else {
-                set(ref(window.db, 'shopName'), shopName);
-            }
-        });
-    </script>
+  .section-title{
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .section-title .lbl{ display:flex; align-items:center; gap:8px; }
+  .section-title .lbl::before{
+    content: '';
+    width: 6px; height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+    box-shadow: 0 0 8px var(--accent);
+  }
 
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        ocean: {
-                            50: '#f0f9ff',
-                            100: '#e0f2fe',
-                            200: '#bae6fd',
-                            400: '#38bdf8',
-                            500: '#0ea5e9',
-                            600: '#0284c7',
-                            700: '#0369a1',
-                            800: '#075985',
-                            900: '#0c4a6e',
-                        }
-                    }
-                }
-            }
-        }
-    </script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600;700;800;900&display=swap');
-        body { font-family: 'Be Vietnam Pro', sans-serif; }
-        .fade-in { animation: fadeIn .25s ease; }
-        @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
-        .tab-active { background: #0ea5e9; color: white; box-shadow: 0 2px 8px rgba(14,165,233,.35); }
-        .tab-inactive { background: white; color: #0369a1; }
-        ::-webkit-scrollbar { width: 5px; height: 5px; }
-        ::-webkit-scrollbar-track { background: #f0f9ff; }
-        ::-webkit-scrollbar-thumb { background: #bae6fd; border-radius: 99px; }
-        .modal-backdrop { animation: fadeIn .2s ease; }
-        input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
-        .qty-btn { transition: all .15s; }
-        .qty-btn:hover { transform: scale(1.1); }
-    </style>
+  /* ---------- Select controls ---------- */
+  label.field{ display: block; margin-bottom: 18px; }
+  label.field span.label-text{ display: block; font-size: 13px; color: var(--text-dim); margin-bottom: 8px; font-weight: 500; }
+  select{
+    width: 100%;
+    appearance: none;
+    background: var(--bg-2);
+    border: 1px solid var(--line-soft);
+    color: var(--text);
+    padding: 13px 40px 13px 14px;
+    border-radius: 10px;
+    font-family: 'Be Vietnam Pro', sans-serif;
+    font-size: 14.5px;
+    font-weight: 500;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1L6 6L11 1' stroke='%23b8ff3d' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  select:hover{ border-color: var(--accent-dim); }
+  select:focus{ outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(184,255,61,0.14); }
+
+  .price-tag{
+    margin-top: 18px;
+    padding: 16px 18px;
+    background: rgba(184,255,61,0.06);
+    border: 1px dashed var(--line);
+    border-radius: 12px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .price-tag .lbl{ font-size: 12.5px; color: var(--text-dim); }
+  .price-tag .val{ font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 19px; color: var(--text); }
+
+  /* ---------- Toggle rows ---------- */
+  .toggle-group{ margin-top: 22px; }
+  .toggle-group + .toggle-group{ margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--line-soft); }
+
+  .row{ display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 12px 0; }
+  .row + .row{ border-top: 1px solid var(--line-soft); }
+  .row .copy{ flex: 1; }
+  .row .copy .t{ font-size: 14px; font-weight: 600; }
+  .row .copy .d{ font-size: 12.5px; color: var(--text-dim); margin-top: 3px; line-height: 1.5; }
+
+  .switch{ position: relative; width: 42px; height: 24px; flex-shrink: 0; margin-top: 2px; }
+  .switch input{ opacity: 0; width: 0; height: 0; position: absolute; }
+  .switch .track{
+    position: absolute; inset: 0;
+    background: var(--bg-2);
+    border: 1px solid var(--line-soft);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background .15s ease, border-color .15s ease;
+  }
+  .switch .track::after{
+    content: '';
+    position: absolute; top: 2px; left: 2px;
+    width: 18px; height: 18px;
+    background: var(--text-dim);
+    border-radius: 50%;
+    transition: transform .18s ease, background .18s ease;
+  }
+  .switch input:checked + .track{ background: rgba(184,255,61,0.15); border-color: var(--accent); }
+  .switch input:checked + .track::after{ transform: translateX(18px); background: var(--accent); }
+  .switch input:focus-visible + .track{ outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .pill-group{ display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+  .pill{ display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 10px; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
+  .pill:hover{ border-color: var(--accent-dim); }
+  .pill input{ accent-color: var(--accent); width: 15px; height: 15px; flex-shrink: 0; }
+  .pill.checked{ background: rgba(184,255,61,0.06); border-color: var(--accent); }
+  .pill .txt{ font-size: 13px; }
+  .pill .txt b{ display:block; font-size: 13.5px; }
+  .pill .txt small{ color: var(--text-dim); font-size: 12px; }
+
+  /* ---------- Dashboard (right) ---------- */
+  .dashboard{ position: sticky; top: 20px; background: linear-gradient(165deg, #0e2a24, #081a1c 70%); border: 1px solid var(--line); box-shadow: 0 0 0 1px rgba(184,255,61,0.04), 0 30px 60px -30px rgba(0,0,0,0.6); }
+
+  .breakdown{ margin-top: 6px; }
+  .b-row{ display: flex; justify-content: space-between; align-items: center; padding: 9px 0; font-size: 13px; border-bottom: 1px dashed var(--line-soft); }
+  .b-row .k{ color: var(--text-dim); }
+  .b-row .v{ font-family: 'JetBrains Mono', monospace; font-weight: 500; }
+  .b-row .v.neg{ color: var(--red); }
+  .b-row .v.pos{ color: var(--accent); }
+  .b-row .v.info{ color: var(--text); }
+  .b-row.header .k{ color: var(--text); font-weight: 700; font-family: 'Space Grotesk', sans-serif; font-size: 14px; }
+  .b-row.subtotal{ border-bottom: 1px solid var(--line); padding-top: 12px; margin-top: 4px; }
+  .b-row.subtotal .k, .b-row.subtotal .v{ font-weight: 700; color: var(--text); }
+  .b-row .step{ font-family:'JetBrains Mono', monospace; font-size:10px; color: var(--text-faint); margin-right: 8px; }
+
+  /* Odometer */
+  .odometer-wrap{ margin-top: 22px; padding: 20px; background: #050f10; border: 1px solid rgba(184,255,61,0.25); border-radius: 14px; box-shadow: inset 0 0 30px rgba(184,255,61,0.05); }
+  .odometer-label{ font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: 0.18em; color: var(--accent); text-transform: uppercase; margin-bottom: 8px; }
+  .odometer{ font-family: 'JetBrains Mono', monospace; font-size: clamp(28px, 4vw, 38px); font-weight: 700; color: var(--accent); letter-spacing: 0.02em; text-shadow: 0 0 18px rgba(184,255,61,0.35); display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px; }
+  .odometer .unit{ font-size: 0.4em; color: var(--text-dim); margin-left: 6px; font-weight: 500; letter-spacing: normal; }
+  .odometer-sub{ margin-top: 6px; font-size: 11.5px; color: var(--text-faint); }
+
+  .savings-badge{ margin-top: 10px; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--amber); font-family: 'JetBrains Mono', monospace; }
+  .savings-badge svg{ width: 12px; height: 12px; }
+
+  .note{ margin-top: 18px; font-size: 11.5px; color: var(--text-faint); line-height: 1.6; border-top: 1px solid var(--line-soft); padding-top: 14px; }
+  .note b{ color: var(--text-dim); }
+
+  footer{ text-align: center; font-size: 11.5px; color: var(--text-faint); padding: 20px; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.04em; }
+
+  /* ---------- Admin ---------- */
+  .admin-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom: 16px; }
+  .btn{
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; letter-spacing: 0.05em;
+    padding: 10px 16px; border-radius: 9px;
+    border: 1px solid var(--line-soft);
+    background: var(--bg-2); color: var(--text);
+    cursor: pointer; transition: all .15s ease;
+  }
+  .btn:hover{ border-color: var(--accent-dim); }
+  .btn.primary{ background: var(--accent); color: #08120a; border-color: var(--accent); font-weight: 700; }
+  .btn.primary:hover{ filter: brightness(1.08); }
+  .btn.ghost{ background: transparent; }
+  .btn.danger{ color: var(--red); border-color: rgba(255,107,94,0.3); }
+  .btn.danger:hover{ background: rgba(255,107,94,0.08); }
+  .btn.small{ padding: 6px 10px; font-size: 11px; }
+
+  .table-scroll{ overflow-x: auto; border-radius: 12px; border: 1px solid var(--line-soft); }
+  table.admin-table{ width: 100%; border-collapse: collapse; min-width: 760px; }
+  table.admin-table thead th{
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--text-faint); text-align: left;
+    background: var(--bg-2);
+    padding: 12px 10px;
+    border-bottom: 1px solid var(--line-soft);
+    position: sticky; top: 0;
+  }
+  table.admin-table td{ padding: 8px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+  table.admin-table tr:last-child td{ border-bottom: none; }
+  table.admin-table input, table.admin-table select{
+    width: 100%;
+    background: var(--bg-2);
+    border: 1px solid var(--line-soft);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 7px;
+    font-family: 'Be Vietnam Pro', sans-serif;
+    font-size: 13px;
+  }
+  table.admin-table input:focus, table.admin-table select:focus{ outline: none; border-color: var(--accent); }
+  table.admin-table input[type=number]{ font-family: 'JetBrains Mono', monospace; }
+
+  .cfg-grid{ display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; }
+  .cfg-field{ background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: 10px; padding: 12px 14px; }
+  .cfg-field label{ display:block; font-size: 12px; color: var(--text-dim); margin-bottom: 8px; line-height: 1.4; }
+  .cfg-field .inp-row{ display:flex; align-items:center; gap: 6px; }
+  .cfg-field input{
+    width: 100%; background: transparent; border: none; border-bottom: 1px solid var(--line-soft);
+    color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 15px; font-weight: 700;
+    padding: 4px 0;
+  }
+  .cfg-field input:focus{ outline: none; border-color: var(--accent); }
+  .cfg-field .unit{ font-size: 12px; color: var(--text-faint); font-family: 'JetBrains Mono', monospace; }
+
+  .save-toast{
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--accent); color: #08120a; font-weight: 700;
+    font-family: 'JetBrains Mono', monospace; font-size: 12.5px;
+    padding: 12px 20px; border-radius: 999px;
+    opacity: 0; pointer-events: none;
+    transition: opacity .25s ease, transform .25s ease;
+    z-index: 50;
+    box-shadow: 0 10px 30px rgba(184,255,61,0.25);
+  }
+  .save-toast.show{ opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  .shared-note{
+    display:flex; align-items:center; gap:8px;
+    font-size: 12px; color: var(--amber);
+    background: rgba(255,178,56,0.08);
+    border: 1px solid rgba(255,178,56,0.25);
+    padding: 10px 14px; border-radius: 10px;
+    margin-bottom: 18px;
+  }
+
+  .loading-row{ padding: 30px; text-align: center; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; font-size: 12.5px; }
+
+  @media (prefers-reduced-motion: reduce){ * { transition: none !important; } }
+</style>
 </head>
-<body class="bg-slate-50 min-h-screen">
+<body>
 
-<!-- HEADER -->
-<header class="bg-gradient-to-r from-ocean-700 via-ocean-600 to-ocean-500 text-white shadow-lg sticky top-0 z-40">
-    <div class="max-w-7xl mx-auto px-4 py-3 flex flex-col sm:flex-row justify-between items-center gap-3">
-        <div class="flex items-center gap-3">
-            <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-xl">☕</div>
-            <div>
-                <h1 id="shop-name-display" class="text-2xl font-black tracking-wide leading-none">QUÁN CAFE THUÝ</h1>
-                <p class="text-ocean-100 text-xs mt-0.5">Hân hạnh được phục vụ quý khách 🌊</p>
-            </div>
-        </div>
-        <div class="flex gap-2 bg-white/10 p-1 rounded-full">
-            <button onclick="switchView('customer')" id="btn-customer"
-                class="px-5 py-2 rounded-full text-sm font-bold transition-all tab-active">
-                🛒 Đặt Nước
-            </button>
-            <button onclick="switchView('admin')" id="btn-admin"
-                class="px-5 py-2 rounded-full text-sm font-bold transition-all tab-inactive">
-                ⚙️ Admin
-            </button>
-        </div>
+<header>
+  <div class="brand">
+    <div class="plug">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M13 2L4 14H11L10 22L20 9H13L13 2Z" fill="#08120a"/>
+      </svg>
     </div>
+    <div class="brand-text">
+      <div class="eyebrow">Unis · Bảng giá nội bộ</div>
+      <h1>CHECK GIÁ XE ĐIỆN</h1>
+    </div>
+  </div>
+  <div class="sub">Chọn xe → bật các ưu đãi áp dụng được → xem giá sau ưu đãi theo thời gian thực.</div>
 </header>
 
-<main class="max-w-7xl mx-auto px-3 py-5 sm:px-6">
-
-<!-- ============================================================ -->
-<!--  PHẦN KHÁCH ORDER                                             -->
-<!-- ============================================================ -->
-<section id="customer-section" class="space-y-5">
-
-    <!-- Banner cho khách biết đang đặt vào đơn hàng số mấy -->
-    <div class="bg-violet-50 border border-violet-200 rounded-xl px-4 py-2.5 flex items-center gap-2">
-        <span class="text-lg">🧾</span>
-        <p class="text-sm font-bold text-violet-700">Bạn đang đặt vào đơn hàng số #<span id="customer-session-label">1</span></p>
-    </div>
-
-    <!-- Banner thông báo đơn hàng chung -->
-    <div id="shared-order-banner" class="bg-ocean-50 border border-ocean-200 rounded-2xl p-4 hidden">
-        <h3 class="text-sm font-bold text-ocean-700 mb-2 flex items-center gap-2">
-            <span>👀</span> Đơn đã đặt trong phiên này
-        </h3>
-        <div id="shared-order-list" class="space-y-1 text-sm text-slate-600 max-h-28 overflow-y-auto"></div>
-    </div>
-
-    <div class="grid grid-cols-1 lg:grid-cols-5 gap-5">
-        <!-- FORM ĐẶT NƯỚC -->
-        <div class="lg:col-span-3 bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
-            <h2 class="text-lg font-bold text-ocean-700 mb-4 flex items-center gap-2">
-                <span class="w-8 h-8 bg-ocean-100 rounded-lg flex items-center justify-center">📝</span>
-                Thông tin đặt món
-            </h2>
-
-            <div class="grid grid-cols-2 gap-3 mb-4">
-                <div>
-                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Ngày đặt</label>
-                    <input type="date" id="order-date" readonly
-                        class="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 text-sm font-medium text-slate-600">
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Đơn vị / Phòng ban</label>
-                    <input type="text" id="order-dept" placeholder="Phòng Kế Toán, Nhóm A..."
-                        class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
-                </div>
-            </div>
-
-            <div class="mb-3">
-                <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Tên khách hàng</label>
-                <input type="text" id="cust-name" placeholder="Nhập tên của bạn..."
-                    class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
-            </div>
-
-            <div class="grid grid-cols-2 gap-3 mb-3">
-                <div>
-                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Loại thức uống</label>
-                    <select id="drink-category" onchange="updateDrinkOptions()"
-                        class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ocean-400">
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Tên món</label>
-                    <select id="drink-name" onchange="updatePriceDisplay()"
-                        class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ocean-400">
-                    </select>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-3 mb-3">
-                <div>
-                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Số lượng</label>
-                    <div class="flex items-center border border-slate-200 rounded-xl overflow-hidden">
-                        <button onclick="adjustQty(-1)" class="qty-btn px-4 py-2.5 bg-slate-50 hover:bg-ocean-50 text-ocean-600 font-bold text-lg">−</button>
-                        <input type="number" id="drink-qty" value="1" min="1"
-                            class="w-full text-center font-bold text-base focus:outline-none py-2 bg-white">
-                        <button onclick="adjustQty(1)" class="qty-btn px-4 py-2.5 bg-slate-50 hover:bg-ocean-50 text-ocean-600 font-bold text-lg">+</button>
-                    </div>
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Đơn giá</label>
-                    <div class="border border-slate-200 rounded-xl px-3 py-2.5 bg-ocean-50 text-center">
-                        <span id="unit-price" class="text-lg font-black text-ocean-600">—</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="mb-4">
-                <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Ghi chú</label>
-                <input type="text" id="drink-note" placeholder="Ít đường, không đá, thêm topping..."
-                    class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
-            </div>
-
-            <div class="flex justify-between items-center bg-gradient-to-r from-ocean-50 to-blue-50 border border-ocean-100 p-4 rounded-xl mb-4">
-                <span class="text-sm font-semibold text-slate-600">Thành tiền:</span>
-                <span id="temp-price" class="text-2xl font-black text-ocean-600">0đ</span>
-            </div>
-
-            <button onclick="addToCart()"
-                class="w-full bg-ocean-500 hover:bg-ocean-600 active:scale-98 text-white font-bold py-3 rounded-xl transition-all shadow-md shadow-ocean-100 flex items-center justify-center gap-2 text-sm">
-                ➕ Thêm vào danh sách đặt
-            </button>
-        </div>
-
-        <!-- GIỎ HÀNG -->
-        <div class="lg:col-span-2 bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex flex-col">
-            <div class="flex items-center justify-between mb-4">
-                <h2 class="text-lg font-bold text-ocean-700 flex items-center gap-2">
-                    <span class="w-8 h-8 bg-ocean-100 rounded-lg flex items-center justify-center">🛒</span>
-                    Đơn của bạn
-                </h2>
-                <span id="cart-count" class="bg-ocean-500 text-white text-xs font-bold px-2.5 py-1 rounded-full">0 món</span>
-            </div>
-
-            <div id="cart-items" class="flex-1 space-y-2.5 min-h-[200px] max-h-[340px] overflow-y-auto pr-1">
-                <div class="flex flex-col items-center justify-center h-40 text-slate-300">
-                    <div class="text-4xl mb-2">🧃</div>
-                    <p class="text-sm">Chưa chọn món nào</p>
-                </div>
-            </div>
-
-            <div class="mt-4 pt-4 border-t border-slate-100 space-y-3">
-                <div class="flex justify-between items-center">
-                    <span class="text-sm font-bold text-slate-600">Tổng thanh toán:</span>
-                    <span id="cart-total" class="text-2xl font-black text-rose-500">0đ</span>
-                </div>
-                <button onclick="submitOrder()"
-                    class="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 rounded-xl transition-all shadow-md shadow-emerald-100 text-sm">
-                    ✅ Hoàn tất đặt hàng
-                </button>
-                <p class="text-center text-xs text-slate-400 italic">✨ Cảm ơn vì khách đã lựa chọn quán em ✨</p>
-            </div>
-        </div>
-    </div>
-</section>
-
-<!-- ============================================================ -->
-<!--  PHẦN ADMIN                                                   -->
-<!-- ============================================================ -->
-<section id="admin-section" class="hidden space-y-5">
-
-    <!-- Login Box -->
-    <div id="admin-login-box" class="max-w-sm mx-auto bg-white rounded-2xl p-6 shadow-md border border-slate-100 mt-10 fade-in">
-        <div class="text-center mb-5">
-            <div class="w-14 h-14 bg-ocean-100 rounded-2xl flex items-center justify-center text-2xl mx-auto mb-3">🔐</div>
-            <h2 class="text-lg font-black text-slate-800">Đăng nhập Admin</h2>
-            <p class="text-xs text-slate-400 mt-1">Chỉ dành cho quản lý quán</p>
-        </div>
-        <div class="space-y-3">
-            <div>
-                <label class="block text-xs font-bold text-slate-500 mb-1">Tài khoản</label>
-                <input type="text" id="admin-user" placeholder="Tài khoản" onkeydown="if(event.key==='Enter')loginAdmin()"
-                    class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
-            </div>
-            <div>
-                <label class="block text-xs font-bold text-slate-500 mb-1">Mật khẩu</label>
-                <input type="password" id="admin-pass" placeholder="Mật khẩu" onkeydown="if(event.key==='Enter')loginAdmin()"
-                    class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
-            </div>
-            <p id="login-error" class="text-red-500 text-xs hidden">❌ Sai tài khoản hoặc mật khẩu</p>
-            <button onclick="loginAdmin()"
-                class="w-full bg-ocean-600 hover:bg-ocean-700 text-white font-bold py-2.5 rounded-xl transition-all text-sm shadow">
-                Đăng Nhập
-            </button>
-        </div>
-    </div>
-
-    <!-- Admin Content -->
-    <div id="admin-content" class="hidden space-y-5 fade-in">
-
-        <!-- Action Bar -->
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
-                <p class="text-xs font-bold text-slate-400 mb-1.5">Tên quán nước</p>
-                <input type="text" id="shop-name-input" value="QUÁN CAFE THUÝ"
-                    class="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm mb-2">
-                <button onclick="changeShopName()"
-                    class="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-1.5 rounded-lg">
-                    Cập nhật tên
-                </button>
-            </div>
-
-            <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
-                <p class="text-xs font-bold text-slate-400 mb-1.5">Lọc theo ngày</p>
-                <input type="date" id="admin-filter-date" onchange="renderAdminDashboard()"
-                    class="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm mb-2">
-                <p class="text-xs text-slate-400">Xem báo cáo theo ngày đã chọn</p>
-            </div>
-
-            <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex flex-col justify-between">
-                <div>
-                    <p class="text-xs font-bold text-slate-400 mb-1">Reset đơn hàng</p>
-                    <p class="text-xs text-slate-400 leading-relaxed">Xóa danh sách đơn hàng hiện tại. Doanh thu theo ngày/tháng vẫn được giữ nguyên trong báo cáo.</p>
-                </div>
-                <button onclick="resetOrders()"
-                    class="mt-2 w-full bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold py-2 rounded-lg">
-                    💥 Reset Đơn Hàng Mới
-                </button>
-            </div>
-
-            <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex flex-col justify-between">
-                <div>
-                    <p class="text-xs font-bold text-slate-400 mb-1">Lịch sử phiên</p>
-                    <p class="text-xs text-slate-400 leading-relaxed">Xem lại các đơn hàng của những phiên đã reset trước đó.</p>
-                </div>
-                <button onclick="openHistoryModal()"
-                    class="mt-2 w-full bg-violet-500 hover:bg-violet-600 text-white text-xs font-bold py-2 rounded-lg">
-                    🕘 Xem Lịch Sử
-                </button>
-            </div>
-
-            <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex flex-col justify-between">
-                <div>
-                    <p class="text-xs font-bold text-slate-400 mb-1">Đăng xuất</p>
-                    <p class="text-xs text-slate-400">Thoát khỏi trang quản trị.</p>
-                </div>
-                <button onclick="logoutAdmin()"
-                    class="mt-2 w-full bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold py-2 rounded-lg">
-                    🔓 Đăng Xuất
-                </button>
-            </div>
-        </div>
-
-        <!-- Banner phiên hiện tại -->
-        <div id="current-session-banner" class="bg-violet-50 border border-violet-200 rounded-xl px-4 py-2 text-xs text-violet-700 font-bold">
-            🟣 Đang ở phiên đơn hàng #<span id="current-session-label">1</span>
-        </div>
-
-        <!-- Stats Cards -->
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div class="bg-gradient-to-br from-ocean-500 to-ocean-700 rounded-xl p-4 text-white shadow">
-                <p class="text-xs opacity-80 font-medium">Doanh thu hôm nay</p>
-                <p id="stat-today-rev" class="text-2xl font-black mt-1">0đ</p>
-            </div>
-            <div class="bg-gradient-to-br from-emerald-500 to-emerald-700 rounded-xl p-4 text-white shadow">
-                <p class="text-xs opacity-80 font-medium">Số đơn hôm nay</p>
-                <p id="stat-today-orders" class="text-2xl font-black mt-1">0</p>
-            </div>
-            <div class="bg-gradient-to-br from-violet-500 to-violet-700 rounded-xl p-4 text-white shadow">
-                <p class="text-xs opacity-80 font-medium">Tổng ly hôm nay</p>
-                <p id="stat-today-cups" class="text-2xl font-black mt-1">0</p>
-            </div>
-            <div class="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 text-white shadow">
-                <p class="text-xs opacity-80 font-medium">Doanh thu tháng này</p>
-                <p id="stat-month-rev" class="text-2xl font-black mt-1">0đ</p>
-            </div>
-        </div>
-
-        <!-- Main Dashboard: Quản lý theo đơn hàng -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-
-            <!-- Danh sách đơn hàng -->
-            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex flex-col">
-                <h3 class="font-bold text-slate-700 border-b border-slate-100 pb-3 mb-3 flex items-center gap-2">
-                    <span class="text-ocean-500">🧾</span> Danh sách đơn
-                    <span class="text-xs text-slate-400 font-normal">(theo đơn hàng số)</span>
-                </h3>
-                <input type="text" id="filter-dept" placeholder="Lọc đơn vị..." onkeyup="renderAdminDashboard()"
-                    class="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs mb-3 focus:outline-none focus:ring-1 focus:ring-ocean-400">
-                <div id="admin-order-list" class="space-y-2 overflow-y-auto max-h-72 flex-1"></div>
-            </div>
-
-            <!-- Chi tiết đơn hàng đã chọn -->
-            <div class="lg:col-span-2 bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
-                <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
-                    <h3 class="font-bold text-slate-700 flex items-center gap-2">
-                        <span class="text-ocean-500">📋</span> Chi tiết đơn hàng
-                    </h3>
-                    <span id="admin-order-detail-header" class="text-xs font-bold text-ocean-600"></span>
-                </div>
-                <div class="overflow-x-auto max-h-60 overflow-y-auto">
-                    <table class="w-full text-sm min-w-[460px]">
-                        <thead class="text-xs font-bold text-slate-400 uppercase bg-slate-50 sticky top-0">
-                            <tr>
-                                <th class="p-2 text-left rounded-l">Tên nước</th>
-                                <th class="p-2 text-left">Người đặt</th>
-                                <th class="p-2 text-center">SL</th>
-                                <th class="p-2 text-right rounded-r">Thành tiền</th>
-                            </tr>
-                        </thead>
-                        <tbody id="admin-order-detail-table" class="divide-y divide-slate-50"></tbody>
-                    </table>
-                </div>
-                <div class="flex justify-between items-center bg-ocean-50 rounded-xl px-4 py-3 mt-3">
-                    <span class="font-bold text-slate-700">Tổng cộng đơn:</span>
-                    <span id="admin-order-detail-total" class="font-black text-xl text-ocean-600">0đ</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- Báo cáo doanh thu theo tháng -->
-        <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
-            <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
-                <h3 class="font-bold text-slate-700 flex items-center gap-2">
-                    <span class="text-ocean-500">📊</span> Doanh thu theo tháng
-                </h3>
-                <select id="revenue-year" onchange="renderAdminDashboard()"
-                    class="border border-slate-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none">
-                </select>
-            </div>
-            <div id="monthly-chart" class="space-y-2"></div>
-        </div>
-
-        <!-- Quản lý menu -->
-        <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
-            <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
-                <h3 class="font-bold text-slate-700 flex items-center gap-2">
-                    <span class="text-ocean-500">🛠️</span> Quản lý Menu & Giá
-                </h3>
-                <button onclick="openAddDrinkModal()"
-                    class="bg-ocean-500 hover:bg-ocean-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1">
-                    + Thêm món mới
-                </button>
-            </div>
-
-            <!-- Filter menu -->
-            <div class="flex gap-2 mb-3 flex-wrap">
-                <input type="text" id="menu-search" placeholder="Tìm tên món..." onkeyup="renderMenuTable()"
-                    class="border border-slate-200 rounded-lg px-3 py-1.5 text-xs flex-1 focus:outline-none focus:ring-1 focus:ring-ocean-400">
-                <select id="menu-filter-cat" onchange="renderMenuTable()"
-                    class="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-ocean-400">
-                    <option value="">Tất cả loại</option>
-                </select>
-            </div>
-
-            <div class="overflow-x-auto max-h-96 overflow-y-auto">
-                <table class="w-full text-sm min-w-[400px]">
-                    <thead class="text-xs font-bold text-slate-400 uppercase bg-slate-50 sticky top-0">
-                        <tr>
-                            <th class="p-2.5 text-left rounded-l">Loại</th>
-                            <th class="p-2.5 text-left">Tên món</th>
-                            <th class="p-2.5 text-right">Giá</th>
-                            <th class="p-2.5 text-center rounded-r">Thao tác</th>
-                        </tr>
-                    </thead>
-                    <tbody id="admin-menu-table" class="divide-y divide-slate-50"></tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-</section>
-
-</main>
-
-<!-- ============================================================ -->
-<!--  MODALS                                                        -->
-<!-- ============================================================ -->
-
-<!-- Modal Xác nhận đặt hàng thành công -->
-<div id="success-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 hidden modal-backdrop">
-    <div class="bg-white rounded-2xl max-w-md w-full p-6 text-center shadow-2xl fade-in">
-        <div class="w-16 h-16 bg-emerald-100 text-emerald-500 rounded-full flex items-center justify-center text-3xl mx-auto mb-4">✓</div>
-        <h3 class="text-xl font-black text-slate-800 mb-1">Đặt Hàng Thành Công!</h3>
-        <p class="text-sm text-slate-400 mb-4">Đây là các món bạn vừa đặt:</p>
-        <div id="modal-summary" class="bg-slate-50 rounded-xl p-3 text-left text-sm space-y-2 max-h-52 overflow-y-auto mb-5"></div>
-        <div id="modal-total-row" class="flex justify-between items-center bg-ocean-50 rounded-xl px-4 py-3 mb-5">
-            <span class="font-bold text-slate-700">Tổng tiền:</span>
-            <span id="modal-total" class="font-black text-xl text-ocean-600"></span>
-        </div>
-        <p class="text-xs text-slate-400 italic mb-4">✨ Cảm ơn vì khách đã lựa chọn quán em ✨</p>
-        <button onclick="closeSuccessModal()"
-            class="w-full bg-ocean-500 hover:bg-ocean-600 text-white font-bold py-3 rounded-xl transition-all">
-            Đóng & Đặt tiếp
-        </button>
-    </div>
+<div class="tabs">
+  <button class="tab-btn active" data-tab="check">Check giá</button>
+  <button class="tab-btn" data-tab="admin">Quản lý</button>
 </div>
 
-<!-- Modal Lịch sử các phiên đã reset -->
-<div id="history-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 hidden modal-backdrop">
-    <div class="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl fade-in max-h-[85vh] flex flex-col">
-        <div class="flex items-center justify-between mb-3">
-            <h3 class="text-lg font-black text-slate-800">🕘 Lịch Sử Các Phiên Đơn Hàng</h3>
-            <button onclick="closeHistoryModal()" class="text-slate-300 hover:text-rose-400 text-2xl leading-none">×</button>
+<!-- ============ TAB 1: CHECK GIÁ ============ -->
+<div class="view active" id="view-check">
+  <div class="wrap">
+
+    <div class="card">
+      <p class="section-title"><span class="lbl">01 · Chọn xe</span></p>
+
+      <label class="field">
+        <span class="label-text">Loại xe</span>
+        <select id="selCategory"></select>
+      </label>
+
+      <label class="field">
+        <span class="label-text">Mẫu xe · pin · hình thức</span>
+        <select id="selModel"></select>
+      </label>
+
+      <div class="price-tag">
+        <span class="lbl">Giá niêm yết</span>
+        <span class="val" id="listPrice">—</span>
+      </div>
+
+      <div class="toggle-group" id="batteryGroup">
+        <p class="section-title"><span class="lbl">02 · Ưu đãi phí thuê pin</span></p>
+        <div class="d" style="font-size:12.5px;color:var(--text-dim);margin-bottom:10px;">Chỉ áp dụng cho các mẫu ở hình thức <b style="color:var(--text)">Thuê pin</b>. Chọn 1 trong 2:</div>
+        <div class="pill-group" id="batteryOptions">
+          <label class="pill" data-val="free">
+            <input type="radio" name="battery" value="free" checked>
+            <div class="txt"><b>Miễn phí phí thuê pin năm đầu</b><small id="batteryFreeLabel">Giảm cố định</small></div>
+          </label>
+          <label class="pill" data-val="percent">
+            <input type="radio" name="battery" value="percent">
+            <div class="txt"><b id="batteryPercentLabel">Giảm % nếu thuê pin từ 3 tháng trở lên</b><small>Giảm % trên giá niêm yết</small></div>
+          </label>
+          <label class="pill" data-val="none">
+            <input type="radio" name="battery" value="none">
+            <div class="txt"><b>Không áp dụng</b><small>Bỏ qua ưu đãi thuê pin</small></div>
+          </label>
         </div>
-        <p class="text-xs text-slate-400 mb-3">Mỗi lần bấm "Reset Đơn Hàng Mới", phiên hiện tại sẽ được lưu lại tại đây. Doanh thu của các phiên này vẫn được tính đầy đủ trong báo cáo doanh thu.</p>
-        <div class="flex-1 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-4 min-h-0">
-            <div class="overflow-y-auto border border-slate-100 rounded-xl p-2 max-h-[60vh]">
-                <p class="text-xs font-bold text-slate-400 px-2 pb-2">Danh sách phiên</p>
-                <div id="history-session-list" class="space-y-1"></div>
-            </div>
-            <div class="overflow-y-auto border border-slate-100 rounded-xl p-3 max-h-[60vh]">
-                <p class="text-xs font-bold text-slate-400 mb-2">Chi tiết đơn hàng của phiên đã chọn</p>
-                <table class="w-full text-xs">
-                    <thead class="text-slate-400 uppercase">
-                        <tr>
-                            <th class="text-left pb-1">Người đặt</th>
-                            <th class="text-left pb-1">Món</th>
-                            <th class="text-center pb-1">SL</th>
-                            <th class="text-right pb-1">Tiền</th>
-                        </tr>
-                    </thead>
-                    <tbody id="history-session-detail" class="divide-y divide-slate-50"></tbody>
-                </table>
-            </div>
+      </div>
+
+      <div class="toggle-group">
+        <p class="section-title"><span class="lbl">03 · Ưu đãi thêm</span></p>
+
+        <div class="row">
+          <div class="copy">
+            <div class="t">Người thân đã có xe Vin</div>
+            <div class="d">Trong nhà đã sở hữu xe máy điện VinFast và ô tô từ trước.</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="chkFamily">
+            <span class="track"></span>
+          </label>
         </div>
+
+        <div class="row">
+          <div class="copy">
+            <div class="t">Người thân là Công an / Vnpost</div>
+            <div class="d">Bố/mẹ/vợ/chồng công tác trong ngành Công an hoặc Vnpost.</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="chkPolice">
+            <span class="track"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="toggle-group">
+        <p class="section-title"><span class="lbl">04 · Phí làm hồ sơ</span></p>
+        <div class="pill-group" id="feeOptions">
+          <label class="pill" data-val="sg">
+            <input type="radio" name="fee" value="sg" checked>
+            <div class="txt"><b>Làm hồ sơ tại Sài Gòn</b><small id="feeSgLabel">—</small></div>
+          </label>
+          <label class="pill" data-val="tinh">
+            <input type="radio" name="fee" value="tinh">
+            <div class="txt"><b>Làm hồ sơ tại tỉnh</b><small id="feeTinhLabel">—</small></div>
+          </label>
+        </div>
+      </div>
     </div>
+
+    <div class="card dashboard">
+      <p class="section-title"><span class="lbl">Cấu trúc giá</span></p>
+      <div class="breakdown" id="breakdown"></div>
+
+      <div class="odometer-wrap">
+        <div class="odometer-label">Giá sau ưu đãi</div>
+        <div class="odometer" id="odometer">0<span class="unit">đ</span></div>
+        <div class="odometer-sub" id="odometerSub">Đã gồm phí ra biển số &amp; phí làm hồ sơ.</div>
+        <div class="savings-badge" id="savingsBadge">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 2V22M12 2L6 8M12 2L18 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span id="savingsText">Tiết kiệm 0đ so với giá niêm yết</span>
+        </div>
+      </div>
+
+      <div class="note">
+        <b>Lưu ý:</b> Các mức giảm theo % được tính trên giá niêm yết và cộng dồn; các mức giảm cố định trừ trực tiếp. Phí ra biển số và phí làm hồ sơ là chi phí phát sinh, được cộng thêm vào giá sau ưu đãi.
+      </div>
+    </div>
+
+  </div>
 </div>
 
-<!-- Modal Thêm / Sửa món -->
-<div id="drink-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 hidden modal-backdrop">
-    <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl fade-in">
-        <h3 id="drink-modal-title" class="text-lg font-black text-slate-800 mb-4">Thêm Món Mới</h3>
-        <input type="hidden" id="edit-drink-index">
-        <div class="space-y-3">
-            <div>
-                <label class="text-xs font-bold text-slate-400 mb-1 block">Loại thức uống</label>
-                <input type="text" id="modal-drink-cat" placeholder="VD: Coffee, Trà, Sinh tố..."
-                    list="cat-suggestions"
-                    class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
-                <datalist id="cat-suggestions"></datalist>
-            </div>
-            <div>
-                <label class="text-xs font-bold text-slate-400 mb-1 block">Tên món</label>
-                <input type="text" id="modal-drink-name" placeholder="VD: Bạc xỉu đặc biệt..."
-                    class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
-            </div>
-            <div>
-                <label class="text-xs font-bold text-slate-400 mb-1 block">Giá bán (nghìn đồng)</label>
-                <input type="number" id="modal-drink-price" placeholder="VD: 25"
-                    class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
-            </div>
-        </div>
-        <div class="flex gap-2 mt-5">
-            <button onclick="saveDrink()"
-                class="flex-1 bg-ocean-500 hover:bg-ocean-600 text-white font-bold py-2.5 rounded-xl text-sm">Lưu</button>
-            <button onclick="closeDrinkModal()"
-                class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2.5 rounded-xl text-sm">Hủy</button>
-        </div>
+<!-- ============ TAB 2: QUẢN LÝ ============ -->
+<div class="view" id="view-admin">
+  <div class="admin-wrap">
+
+    <div class="shared-note">
+      ⚠ Dữ liệu được đồng bộ <b>realtime qua Firebase</b> — mọi người mở trang này (trên mọi thiết bị) đều thấy và có thể chỉnh sửa cùng một bảng giá, thay đổi hiện ra ngay không cần tải lại trang.
     </div>
-</div>
 
-<!-- ============================================================ -->
-<!--  JAVASCRIPT                                                   -->
-<!-- ============================================================ -->
-<script>
-// =====================================================
-// DỮ LIỆU MẶC ĐỊNH (đầy đủ từ file Excel)
-// =====================================================
-const defaultMenu = [
-    // Coffee
-    { cat: "Coffee", name: "cafe đá", price: 15 },
-    { cat: "Coffee", name: "cafe sữa nhỏ", price: 18 },
-    { cat: "Coffee", name: "cafe sữa lớn", price: 24 },
-    { cat: "Coffee", name: "cafe muối nhỏ", price: 23 },
-    { cat: "Coffee", name: "cafe muối lớn", price: 28 },
-    { cat: "Coffee", name: "cafe sữa sương sáo", price: 28 },
-    { cat: "Coffee", name: "bạc xỉu", price: 24 },
-    { cat: "Coffee", name: "bạc xỉu kem", price: 28 },
-    { cat: "Coffee", name: "bạc xỉu sương sáo", price: 28 },
-    { cat: "Coffee", name: "cacao sữa", price: 24 },
-    { cat: "Coffee", name: "cacao sữa kem", price: 28 },
-    { cat: "Coffee", name: "matcha latte", price: 24 },
-    { cat: "Coffee", name: "matcha latte kem", price: 28 },
-    { cat: "Coffee", name: "matcha sương sáo", price: 28 },
-    { cat: "Coffee", name: "matcha dâu", price: 28 },
-    { cat: "Coffee", name: "matcha xoài", price: 28 },
-    { cat: "Coffee", name: "matcha chuối", price: 28 },
-    // Nước ép
-    { cat: "Nước ép", name: "ép cam", price: 20 },
-    { cat: "Nước ép", name: "ép ổi", price: 20 },
-    { cat: "Nước ép", name: "ép carot", price: 20 },
-    { cat: "Nước ép", name: "ép dưa hấu", price: 20 },
-    { cat: "Nước ép", name: "ép chanh dây", price: 20 },
-    { cat: "Nước ép", name: "ép thơm", price: 25 },
-    { cat: "Nước ép", name: "ép táo", price: 25 },
-    { cat: "Nước ép", name: "ép dưa lưới", price: 25 },
-    // Rau má
-    { cat: "Rau má", name: "rau má", price: 15 },
-    { cat: "Rau má", name: "rau má sữa", price: 17 },
-    { cat: "Rau má", name: "rau má sữa dừa", price: 20 },
-    { cat: "Rau má", name: "rau má sữa kem", price: 22 },
-    { cat: "Rau má", name: "rau má sữa đậu đỏ", price: 25 },
-    { cat: "Rau má", name: "rau má dừa", price: 17 },
-    // Trà
-    { cat: "Trà", name: "trà đào", price: 20 },
-    { cat: "Trà", name: "trà vải", price: 20 },
-    { cat: "Trà", name: "trà lipton", price: 20 },
-    { cat: "Trà", name: "trà ổi", price: 20 },
-    { cat: "Trà", name: "trà sen", price: 25 },
-    { cat: "Trà", name: "trà nhãn", price: 25 },
-    { cat: "Trà", name: "trà xoài", price: 25 },
-    { cat: "Trà", name: "trà dâu", price: 25 },
-    { cat: "Trà", name: "trà dưa lưới", price: 25 },
-    { cat: "Trà", name: "trà mãng cầu", price: 25 },
-    { cat: "Trà", name: "trà trái cây", price: 25 },
-    // Sâm
-    { cat: "Sâm", name: "sâm lạnh", price: 12 },
-    { cat: "Sâm", name: "sâm hạt chia", price: 15 },
-    { cat: "Sâm", name: "sâm sương sáo hạt chia", price: 18 },
-    { cat: "Sâm", name: "sâm topping", price: 20 },
-    { cat: "Sâm", name: "đá me", price: 20 },
-    { cat: "Sâm", name: "sâm thảo mộc", price: 25 },
-    { cat: "Sâm", name: "sâm bổ lượng", price: 25 },
-    { cat: "Sâm", name: "sâm dừa", price: 17 },
-    { cat: "Sâm", name: "sâm dứa sữa", price: 17 },
-    // Sinh tố
-    { cat: "Sinh tố", name: "sinh tố bơ", price: 28 },
-    { cat: "Sinh tố", name: "sinh tố bơ kem", price: 32 },
-    { cat: "Sinh tố", name: "sinh tố dâu", price: 28 },
-    { cat: "Sinh tố", name: "sinh tố dâu kem", price: 32 },
-    { cat: "Sinh tố", name: "sinh tố sapo", price: 28 },
-    { cat: "Sinh tố", name: "sinh tố mãng cầu", price: 28 },
-    { cat: "Sinh tố", name: "sinh tố dưa lưới", price: 28 },
-    // Đá xay
-    { cat: "Đá xay", name: "cafe sữa đá xay", price: 28 },
-    { cat: "Đá xay", name: "cacao đá xay", price: 28 },
-    { cat: "Đá xay", name: "việt quất đá xay", price: 28 },
-    { cat: "Đá xay", name: "matcha đá xay", price: 28 },
-    { cat: "Đá xay", name: "chanh tuyết", price: 22 },
-    // Yaourt
-    { cat: "Yaourt", name: "yaua đá", price: 22 },
-    { cat: "Yaourt", name: "yaua dâu", price: 27 },
-    { cat: "Yaourt", name: "yaua xoài", price: 27 },
-    { cat: "Yaourt", name: "yaua việt quất", price: 27 },
-    { cat: "Yaourt", name: "yaua trái cây", price: 32 },
-    // Soda
-    { cat: "Soda", name: "soda dâu", price: 17 },
-    { cat: "Soda", name: "soda việt quất", price: 17 },
-    { cat: "Soda", name: "soda blue", price: 17 },
-    { cat: "Soda", name: "soda bạc hà", price: 17 },
-    // Dừa
-    { cat: "Dừa", name: "dừa đá", price: 20 },
-    { cat: "Dừa", name: "dừa tắc", price: 20 },
-    { cat: "Dừa", name: "dừa tắc xí muội", price: 20 },
-    { cat: "Dừa", name: "dừa nhiệt đới", price: 25 },
-    { cat: "Dừa", name: "dừa hạt chia", price: 25 },
-    { cat: "Dừa", name: "dừa đào", price: 25 },
-    { cat: "Dừa", name: "dừa sen", price: 25 },
-    { cat: "Dừa", name: "dừa thảo mộc", price: 25 },
-    { cat: "Dừa", name: "dừa thảo mộc full topping", price: 30 },
-    // Trà sữa tươi
-    { cat: "Trà sữa tươi", name: "trà sữa tươi", price: 20 },
-    { cat: "Trà sữa tươi", name: "trà sữa tươi trân châu trắng", price: 25 },
-    { cat: "Trà sữa tươi", name: "trà sữa tươi sương sáo", price: 25 },
-    { cat: "Trà sữa tươi", name: "lipton sữa", price: 20 },
-    { cat: "Trà sữa tươi", name: "lipton sữa kem", price: 25 },
-    // Nước giải khát
-    { cat: "Nước giải khát", name: "nước ngọt các loại", price: 15 },
-    { cat: "Nước giải khát", name: "redbull", price: 18 },
-];
-
-// =====================================================
-// TRẠNG THÁI ỨNG DỤNG
-// =====================================================
-// Dữ liệu thật lấy từ Firebase Realtime Database qua các onValue listener
-// trong script module ở phần <head>. Các giá trị dưới đây chỉ là giá trị
-// khởi tạo ban đầu (hiển thị tạm trước khi Firebase đồng bộ xong, và cũng
-// là dữ liệu "seed" được ghi lên Firebase nếu đây là lần chạy đầu tiên).
-let menu = JSON.parse(JSON.stringify(defaultMenu));
-// "orders" chỉ lưu các đơn hàng ĐANG chờ Admin quản lý (chưa reset). Mỗi món
-// trong giỏ có chung "orderId" sẽ được gộp lại thành 1 đơn hàng khi hiển thị.
-let orders = [];
-let shopName = 'QUÁN CAFE THUÝ';
-
-// Phiên đơn hàng hiện tại (tăng lên mỗi lần admin bấm Reset)
-let currentSessionId = 1;
-// Lịch sử các phiên đã reset: [{ id, resetAt, orderCount, revenue, orders }]
-let resetSessions = [];
-// Kho lưu trữ doanh thu theo ngày, KHÔNG bị mất khi reset đơn hàng:
-// { 'YYYY-MM-DD': { revenue, orderCount, cupCount } }
-let revenueArchive = {};
-// Số đơn hàng đang được chọn để xem chi tiết trong màn hình Admin
-// (đơn hàng số N = phiên hiện tại đang mở nếu N === currentSessionId,
-// hoặc 1 phiên đã reset trong resetSessions nếu N là số cũ)
-let selectedOrderNumber = null;
-
-let currentCart = [];
-let isAdminLoggedIn = false;
-
-// =====================================================
-// KHỞI TẠO
-// =====================================================
-window.onload = function () {
-    // Ngày hôm nay theo local
-    const now = new Date();
-    const todayLocal = now.getFullYear() + '-' +
-        String(now.getMonth() + 1).padStart(2, '0') + '-' +
-        String(now.getDate()).padStart(2, '0');
-    document.getElementById('order-date').value = todayLocal;
-    document.getElementById('admin-filter-date').value = todayLocal;
-
-    // Năm trong báo cáo
-    const yearSel = document.getElementById('revenue-year');
-    for (let y = 2024; y <= now.getFullYear() + 1; y++) {
-        const o = document.createElement('option');
-        o.value = y; o.textContent = 'Năm ' + y;
-        if (y === now.getFullYear()) o.selected = true;
-        yearSel.appendChild(o);
-    }
-
-    document.getElementById('shop-name-display').innerText = shopName;
-    document.getElementById('shop-name-input').value = shopName;
-    initMenuDropdowns();
-    renderCart();
-    renderSharedOrderView();
-    updateSessionLabel();
-};
-
-function updateSessionLabel() {
-    const el = document.getElementById('current-session-label');
-    if (el) el.textContent = currentSessionId;
-    const custEl = document.getElementById('customer-session-label');
-    if (custEl) custEl.textContent = currentSessionId;
-}
-
-// =====================================================
-// CHUYỂN VIEW
-// =====================================================
-function switchView(view) {
-    const secCust = document.getElementById('customer-section');
-    const secAdmin = document.getElementById('admin-section');
-    const btnCust = document.getElementById('btn-customer');
-    const btnAdmin = document.getElementById('btn-admin');
-
-    if (view === 'customer') {
-        secCust.classList.remove('hidden');
-        secAdmin.classList.add('hidden');
-        btnCust.className = 'px-5 py-2 rounded-full text-sm font-bold transition-all tab-active';
-        btnAdmin.className = 'px-5 py-2 rounded-full text-sm font-bold transition-all tab-inactive';
-    } else {
-        secCust.classList.add('hidden');
-        secAdmin.classList.remove('hidden');
-        btnAdmin.className = 'px-5 py-2 rounded-full text-sm font-bold transition-all tab-active';
-        btnCust.className = 'px-5 py-2 rounded-full text-sm font-bold transition-all tab-inactive';
-        if (isAdminLoggedIn) renderAdminDashboard();
-    }
-}
-
-// =====================================================
-// KHÁCH HÀNG: DROPDOWN MENU
-// =====================================================
-function initMenuDropdowns() {
-    const catSel = document.getElementById('drink-category');
-    const cats = [...new Set(menu.map(d => d.cat))];
-    catSel.innerHTML = cats.map(c => `<option value="${c}">${c}</option>`).join('');
-    updateDrinkOptions();
-    populateCatSuggestions();
-}
-
-function updateDrinkOptions() {
-    const cat = document.getElementById('drink-category').value;
-    const nameSel = document.getElementById('drink-name');
-    const items = menu.filter(d => d.cat === cat);
-    nameSel.innerHTML = items.map(d =>
-        `<option value="${d.name}" data-price="${d.price}">${d.name} — ${d.price}k</option>`
-    ).join('');
-    updatePriceDisplay();
-}
-
-function updatePriceDisplay() {
-    const sel = document.getElementById('drink-name');
-    const opt = sel.options[sel.selectedIndex];
-    const price = opt ? parseInt(opt.dataset.price) : 0;
-    const qty = parseInt(document.getElementById('drink-qty').value) || 1;
-    document.getElementById('unit-price').textContent = price ? price + 'k' : '—';
-    document.getElementById('temp-price').textContent = formatMoney(price * qty);
-}
-
-function adjustQty(d) {
-    const inp = document.getElementById('drink-qty');
-    inp.value = Math.max(1, (parseInt(inp.value) || 1) + d);
-    updatePriceDisplay();
-}
-
-document.getElementById('drink-qty').addEventListener('input', updatePriceDisplay);
-
-// =====================================================
-// KHÁCH HÀNG: GIỎ HÀNG
-// =====================================================
-function addToCart() {
-    const name = document.getElementById('cust-name').value.trim();
-    const dept = document.getElementById('order-dept').value.trim();
-    const drinkSel = document.getElementById('drink-name');
-    const drinkName = drinkSel.value;
-    const price = parseInt(drinkSel.options[drinkSel.selectedIndex]?.dataset.price) || 0;
-    const qty = parseInt(document.getElementById('drink-qty').value) || 1;
-    const note = document.getElementById('drink-note').value.trim();
-    const date = document.getElementById('order-date').value;
-
-    if (!name) { alert('Vui lòng nhập tên khách hàng!'); return; }
-    if (!drinkName) { alert('Vui lòng chọn món!'); return; }
-
-    currentCart.push({ name, dept, drinkName, price, qty, note, date, cat: document.getElementById('drink-category').value });
-    renderCart();
-
-    // Reset form
-    document.getElementById('drink-qty').value = 1;
-    document.getElementById('drink-note').value = '';
-    updatePriceDisplay();
-}
-
-function renderCart() {
-    const container = document.getElementById('cart-items');
-    const total = currentCart.reduce((s, i) => s + i.price * i.qty, 0);
-
-    if (currentCart.length === 0) {
-        container.innerHTML = `<div class="flex flex-col items-center justify-center h-40 text-slate-300">
-            <div class="text-4xl mb-2">🧃</div><p class="text-sm">Chưa chọn món nào</p></div>`;
-    } else {
-        container.innerHTML = currentCart.map((item, i) => `
-            <div class="flex items-start gap-2 bg-slate-50 rounded-xl p-3 fade-in">
-                <div class="flex-1 min-w-0">
-                    <p class="font-bold text-sm text-slate-800 truncate">${item.drinkName}</p>
-                    <p class="text-xs text-slate-400">Người đặt: <span class="text-slate-600 font-medium">${item.name}</span></p>
-                    ${item.note ? `<p class="text-xs text-slate-400 italic">"${item.note}"</p>` : ''}
-                    <p class="text-xs text-ocean-600 font-bold mt-0.5">${item.qty} × ${item.price}k = ${formatMoney(item.qty * item.price)}</p>
-                </div>
-                <button onclick="removeFromCart(${i})" class="text-slate-300 hover:text-rose-400 text-lg leading-none transition-colors">×</button>
-            </div>
-        `).join('');
-    }
-
-    document.getElementById('cart-count').textContent = currentCart.length + ' món';
-    document.getElementById('cart-total').textContent = formatMoney(total);
-}
-
-function removeFromCart(i) {
-    currentCart.splice(i, 1);
-    renderCart();
-}
-
-function submitOrder() {
-    if (currentCart.length === 0) { alert('Chưa có món nào trong đơn!'); return; }
-
-    const total = currentCart.reduce((s, i) => s + i.price * i.qty, 0);
-    const orderId = 'o' + Date.now() + Math.random().toString(36).slice(2, 7);
-    const timestamp = Date.now();
-
-    // Ghi từng món vào Firebase (mỗi món 1 record), gắn chung orderId + timestamp
-    // để Admin gộp lại thành 1 đơn hàng khi quản lý.
-    const newOrders = currentCart.map(item => ({ ...item, orderId, timestamp }));
-    orders.push(...newOrders);
-    if (window.FIREBASE_READY) {
-        newOrders.forEach(item => window.fbPush(window.fbRef(window.db, 'orders'), item));
-    }
-
-    // Hiện modal xác nhận
-    const summaryEl = document.getElementById('modal-summary');
-    summaryEl.innerHTML = currentCart.map(item => `
-        <div class="flex justify-between items-center py-1">
-            <div>
-                <span class="font-bold">${item.drinkName}</span>
-                <span class="text-slate-400 text-xs ml-1">× ${item.qty}</span>
-                <span class="text-slate-400 text-xs block">của ${item.name}${item.note ? ' — ' + item.note : ''}</span>
-            </div>
-            <span class="font-bold text-ocean-600 text-sm">${formatMoney(item.qty * item.price)}</span>
+    <div class="card">
+      <div class="admin-toolbar">
+        <p class="section-title" style="margin:0;"><span class="lbl">Bảng xe &amp; giá niêm yết</span></p>
+        <div style="display:flex; gap:8px;">
+          <button class="btn ghost" id="btnAddRow">+ Thêm dòng</button>
+          <button class="btn primary" id="btnSaveVehicles">Lưu bảng giá</button>
         </div>
-    `).join('');
-    document.getElementById('modal-total').textContent = formatMoney(total);
-    document.getElementById('success-modal').classList.remove('hidden');
-
-    currentCart = [];
-    renderCart();
-    renderSharedOrderView();
-}
-
-function closeSuccessModal() {
-    document.getElementById('success-modal').classList.add('hidden');
-}
-
-// Hiện đơn của mọi người trong phiên hiện tại (không cần đăng nhập)
-function renderSharedOrderView() {
-    const today = document.getElementById('order-date').value;
-    const todayOrders = orders.filter(o => o.date === today);
-    const banner = document.getElementById('shared-order-banner');
-    const list = document.getElementById('shared-order-list');
-
-    if (todayOrders.length === 0) {
-        banner.classList.add('hidden');
-        return;
-    }
-    banner.classList.remove('hidden');
-
-    // Gom theo loại nước (tổng số lượng + danh sách tên)
-    const byDrink = {};
-    todayOrders.forEach(o => {
-        if (!byDrink[o.drinkName]) byDrink[o.drinkName] = { qty: 0, names: [] };
-        byDrink[o.drinkName].qty += o.qty;
-        byDrink[o.drinkName].names.push(o.name);
-    });
-
-    list.innerHTML = Object.entries(byDrink).map(([drink, info]) =>
-        `<div class="flex gap-2"><span class="font-bold text-ocean-700 shrink-0">• ${drink} ×${info.qty}:</span><span class="text-slate-500">${info.names.join(', ')}</span></div>`
-    ).join('');
-}
-
-// =====================================================
-// ADMIN: ĐĂNG NHẬP / ĐĂNG XUẤT
-// =====================================================
-function loginAdmin() {
-    const u = document.getElementById('admin-user').value.trim();
-    const p = document.getElementById('admin-pass').value;
-    // FIREBASE: có thể dùng Firebase Auth thay hardcode
-    if (u === 'Coffee' && p === '2026') {
-        isAdminLoggedIn = true;
-        document.getElementById('admin-login-box').classList.add('hidden');
-        document.getElementById('admin-content').classList.remove('hidden');
-        document.getElementById('login-error').classList.add('hidden');
-        renderAdminDashboard();
-        renderMenuTable();
-    } else {
-        document.getElementById('login-error').classList.remove('hidden');
-    }
-}
-
-function logoutAdmin() {
-    isAdminLoggedIn = false;
-    document.getElementById('admin-content').classList.add('hidden');
-    document.getElementById('admin-login-box').classList.remove('hidden');
-    document.getElementById('admin-user').value = '';
-    document.getElementById('admin-pass').value = '';
-}
-
-// =====================================================
-// ADMIN: TÊN QUÁN
-// =====================================================
-function changeShopName() {
-    const n = document.getElementById('shop-name-input').value.trim();
-    if (!n) return;
-    shopName = n;
-    if (window.FIREBASE_READY) window.fbSet(window.fbRef(window.db, 'shopName'), shopName);
-    document.getElementById('shop-name-display').innerText = shopName;
-    alert('✅ Đã cập nhật tên quán: ' + shopName);
-}
-
-// =====================================================
-// ADMIN: RESET ĐƠN HÀNG (xóa danh sách đơn, giữ lại báo cáo doanh thu)
-// =====================================================
-function resetOrders() {
-    if (orders.length === 0) { alert('Không có đơn hàng nào để reset.'); return; }
-    if (!confirm('⚠️ Bạn có chắc muốn xóa danh sách đơn hàng hiện tại?\nDoanh thu theo ngày/tháng vẫn được giữ nguyên trong báo cáo, và chi tiết đơn cũ vẫn xem lại được trong "Lịch sử phiên".')) return;
-
-    // Cộng dồn doanh thu của các đơn hàng hiện tại vào kho lưu trữ theo ngày
-    const byDate = {};
-    orders.forEach(o => {
-        if (!byDate[o.date]) byDate[o.date] = { orderIds: new Set(), revenue: 0, cupCount: 0 };
-        byDate[o.date].orderIds.add(o.orderId);
-        byDate[o.date].revenue += o.price * o.qty;
-        byDate[o.date].cupCount += o.qty;
-    });
-    Object.entries(byDate).forEach(([date, v]) => {
-        const prev = revenueArchive[date] || { revenue: 0, orderCount: 0, cupCount: 0 };
-        revenueArchive[date] = {
-            revenue: prev.revenue + v.revenue,
-            orderCount: prev.orderCount + v.orderIds.size,
-            cupCount: prev.cupCount + v.cupCount
-        };
-    });
-
-    // Lưu lại bản sao chi tiết của phiên này vào lịch sử (để xem lại trong "Lịch sử phiên")
-    const sessionRevenue = orders.reduce((s, o) => s + o.price * o.qty, 0);
-    const sessionOrderCount = new Set(orders.map(o => o.orderId)).size;
-    resetSessions.push({
-        id: currentSessionId,
-        resetAt: Date.now(),
-        orderCount: sessionOrderCount,
-        revenue: sessionRevenue,
-        orders: orders
-    });
-
-    // Xóa danh sách đơn hàng hiện tại khỏi màn hình quản lý (cả local và Firebase)
-    orders = [];
-    selectedOrderNumber = null;
-    currentSessionId += 1;
-
-    if (window.FIREBASE_READY) {
-        window.fbSet(window.fbRef(window.db, 'orders'), null);
-        window.fbSet(window.fbRef(window.db, 'revenueArchive'), revenueArchive);
-        window.fbSet(window.fbRef(window.db, 'resetSessions'), resetSessions);
-        window.fbSet(window.fbRef(window.db, 'currentSessionId'), currentSessionId);
-    }
-
-    renderAdminDashboard();
-    renderSharedOrderView();
-    updateSessionLabel();
-    alert('✅ Đã xóa danh sách đơn hàng. Doanh thu theo ngày/tháng vẫn được lưu đầy đủ trong báo cáo.');
-}
-
-// =====================================================
-// ADMIN: LỊCH SỬ CÁC PHIÊN ĐÃ RESET
-// =====================================================
-function openHistoryModal() {
-    const listEl = document.getElementById('history-session-list');
-    const detailEl = document.getElementById('history-session-detail');
-    detailEl.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-slate-300">Chọn một phiên bên trái để xem chi tiết</td></tr>`;
-
-    if (resetSessions.length === 0) {
-        listEl.innerHTML = `<p class="text-xs text-slate-300 text-center py-6">Chưa có phiên nào được reset.</p>`;
-    } else {
-        // Hiện phiên mới nhất lên trên
-        listEl.innerHTML = [...resetSessions].reverse().map(s => {
-            const d = new Date(s.resetAt);
-            const dateStr = d.toLocaleString('vi-VN');
-            return `
-                <button onclick="showHistorySession(${s.id})"
-                    class="w-full text-left px-3 py-2 rounded-lg hover:bg-violet-50 border border-slate-100 text-xs">
-                    <p class="font-bold text-slate-700">Phiên #${s.id}</p>
-                    <p class="text-slate-400">${dateStr}</p>
-                    <p class="text-slate-500">${s.orderCount} đơn · <span class="font-bold text-ocean-600">${formatMoney(s.revenue)}</span></p>
-                </button>
-            `;
-        }).join('');
-    }
-
-    document.getElementById('history-modal').classList.remove('hidden');
-}
-
-function closeHistoryModal() {
-    document.getElementById('history-modal').classList.add('hidden');
-}
-
-function showHistorySession(sessionId) {
-    const detailEl = document.getElementById('history-session-detail');
-    const session = resetSessions.find(s => s.id === sessionId);
-    const sessionOrders = session?.orders || [];
-
-    if (sessionOrders.length === 0) {
-        detailEl.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-slate-300">Không có đơn hàng nào trong phiên này</td></tr>`;
-        return;
-    }
-
-    detailEl.innerHTML = sessionOrders.map(o => `
-        <tr>
-            <td class="py-1 font-semibold text-slate-700">${o.name}</td>
-            <td class="py-1 text-slate-600">${o.drinkName}</td>
-            <td class="py-1 text-center text-ocean-600 font-bold">${o.qty}</td>
-            <td class="py-1 text-right font-bold text-slate-700">${formatMoney(o.price * o.qty)}</td>
-        </tr>
-    `).join('');
-}
-
-// =====================================================
-// ADMIN: DASHBOARD
-// =====================================================
-
-// Lấy toàn bộ số đơn hàng đã từng tồn tại: đơn hàng hiện tại đang mở (currentSessionId)
-// + các đơn hàng đã reset trước đó (lưu trong resetSessions), sắp xếp mới nhất lên đầu
-function getAllOrderNumbers() {
-    const nums = new Set([currentSessionId, ...resetSessions.map(s => s.id)]);
-    return [...nums].sort((a, b) => b - a);
-}
-
-// Lấy danh sách các món (từng dòng khách đặt) thuộc về 1 đơn hàng số N
-function getItemsForOrderNumber(num) {
-    if (num === currentSessionId) return orders;
-    const session = resetSessions.find(s => s.id === num);
-    return session ? session.orders : [];
-}
-
-// Gom các món GIỐNG NHAU (cùng tên nước + cùng ghi chú) lại thành 1 dòng,
-// đồng thời gom tên những người đặt cùng món đó vào chung 1 dòng
-function groupItemsByDrink(items) {
-    const map = {};
-    items.forEach(it => {
-        const key = it.drinkName + '||' + (it.note || '');
-        if (!map[key]) map[key] = { drinkName: it.drinkName, note: it.note, price: it.price, qty: 0, nameQty: {} };
-        map[key].qty += it.qty;
-        map[key].nameQty[it.name] = (map[key].nameQty[it.name] || 0) + it.qty;
-    });
-    return Object.values(map).sort((a, b) => b.qty - a.qty);
-}
-
-// Kết hợp doanh thu đơn hàng còn sống (chưa reset) + doanh thu đã lưu trữ (đã reset)
-// để "Doanh thu hôm nay/tháng này" và biểu đồ theo tháng không bị mất dữ liệu sau khi reset.
-function getCombinedDailyStats() {
-    const stats = {};
-    Object.entries(revenueArchive).forEach(([date, v]) => {
-        stats[date] = { revenue: v.revenue, orderCount: v.orderCount, cupCount: v.cupCount };
-    });
-    const liveByDate = {};
-    orders.forEach(o => {
-        if (!liveByDate[o.date]) liveByDate[o.date] = { orderIds: new Set(), revenue: 0, cupCount: 0 };
-        liveByDate[o.date].orderIds.add(o.orderId);
-        liveByDate[o.date].revenue += o.price * o.qty;
-        liveByDate[o.date].cupCount += o.qty;
-    });
-    Object.entries(liveByDate).forEach(([date, v]) => {
-        if (!stats[date]) stats[date] = { revenue: 0, orderCount: 0, cupCount: 0 };
-        stats[date].revenue += v.revenue;
-        stats[date].orderCount += v.orderIds.size;
-        stats[date].cupCount += v.cupCount;
-    });
-    return stats;
-}
-
-function renderAdminDashboard() {
-    const filterDate = document.getElementById('admin-filter-date').value;
-    const filterDept = (document.getElementById('filter-dept')?.value || '').toLowerCase();
-    const now = new Date();
-    const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
-    const monthStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
-
-    // Chỉ giữ lại những đơn hàng số có ít nhất 1 món khớp với ngày/đơn vị đang lọc
-    const orderNumbers = getAllOrderNumbers().filter(num => {
-        const items = getItemsForOrderNumber(num);
-        return items.some(i =>
-            (!filterDate || i.date === filterDate) &&
-            (!filterDept || (i.dept || '').toLowerCase().includes(filterDept))
-        );
-    });
-
-    // Stats (kết hợp đơn còn sống + doanh thu đã lưu trữ)
-    const combinedStats = getCombinedDailyStats();
-    const todayRev = combinedStats[todayStr]?.revenue || 0;
-    const todayOrderCount = combinedStats[todayStr]?.orderCount || 0;
-    const todayCups = combinedStats[todayStr]?.cupCount || 0;
-    let monthRev = 0;
-    Object.entries(combinedStats).forEach(([d, v]) => { if (d.startsWith(monthStr)) monthRev += v.revenue; });
-
-    document.getElementById('stat-today-rev').textContent = formatMoney(todayRev);
-    document.getElementById('stat-today-orders').textContent = todayOrderCount;
-    document.getElementById('stat-today-cups').textContent = todayCups + ' ly';
-    document.getElementById('stat-month-rev').textContent = formatMoney(monthRev);
-
-    // Danh sách đơn hàng (bên trái) — mỗi dòng là 1 đơn hàng số N
-    const listEl = document.getElementById('admin-order-list');
-    if (orderNumbers.length === 0) {
-        listEl.innerHTML = `<p class="text-center text-slate-300 text-sm py-8">Không có đơn hàng</p>`;
-        selectedOrderNumber = null;
-    } else {
-        if (!selectedOrderNumber || !orderNumbers.includes(selectedOrderNumber)) {
-            selectedOrderNumber = orderNumbers[0];
-        }
-        listEl.innerHTML = orderNumbers.map(num => {
-            const items = getItemsForOrderNumber(num);
-            const total = items.reduce((s, i) => s + i.price * i.qty, 0);
-            const cupCount = items.reduce((s, i) => s + i.qty, 0);
-            const isLive = num === currentSessionId;
-            const active = num === selectedOrderNumber;
-            return `
-                <button onclick="selectAdminOrderNumber(${num})"
-                    class="w-full text-left p-3 rounded-xl border transition-all ${active ? 'border-ocean-400 bg-ocean-50 shadow-sm' : 'border-slate-100 hover:bg-slate-50'}">
-                    <div class="flex justify-between items-center gap-2">
-                        <p class="font-bold text-sm text-slate-800 truncate">Đơn hàng #${num}${isLive ? ' <span class="text-emerald-500 font-normal">(đang mở)</span>' : ''}</p>
-                        <p class="font-black text-ocean-600 text-sm shrink-0">${formatMoney(total)}</p>
-                    </div>
-                    <p class="text-xs text-slate-400 mt-0.5">${cupCount} món</p>
-                </button>
-            `;
-        }).join('');
-    }
-
-    renderAdminOrderDetail();
-
-    // Báo cáo tháng
-    renderMonthlyChart(combinedStats);
-}
-
-function selectAdminOrderNumber(num) {
-    selectedOrderNumber = num;
-    renderAdminDashboard();
-}
-
-// Chi tiết đơn hàng số đang được chọn (bên phải): gom theo từng loại nước,
-// tên những người đặt giống nhau được gộp chung 1 dòng, kèm tổng cộng
-function renderAdminOrderDetail() {
-    const filterDate = document.getElementById('admin-filter-date').value;
-    const filterDept = (document.getElementById('filter-dept')?.value || '').toLowerCase();
-    const headerEl = document.getElementById('admin-order-detail-header');
-    const tableEl = document.getElementById('admin-order-detail-table');
-    const totalEl = document.getElementById('admin-order-detail-total');
-
-    if (!selectedOrderNumber) {
-        headerEl.textContent = '';
-        tableEl.innerHTML = `<tr><td colspan="4" class="py-8 text-center text-slate-300 text-sm">Chọn một đơn hàng bên trái để xem chi tiết</td></tr>`;
-        totalEl.textContent = '0đ';
-        return;
-    }
-
-    const isLive = selectedOrderNumber === currentSessionId;
-    headerEl.textContent = `Đơn hàng #${selectedOrderNumber}${isLive ? ' (đang mở)' : ''}`;
-
-    const items = getItemsForOrderNumber(selectedOrderNumber).filter(i =>
-        (!filterDate || i.date === filterDate) &&
-        (!filterDept || (i.dept || '').toLowerCase().includes(filterDept))
-    );
-
-    if (items.length === 0) {
-        tableEl.innerHTML = `<tr><td colspan="4" class="py-8 text-center text-slate-300 text-sm">Không có món nào</td></tr>`;
-        totalEl.textContent = '0đ';
-        return;
-    }
-
-    const grouped = groupItemsByDrink(items);
-    const total = items.reduce((s, i) => s + i.price * i.qty, 0);
-
-    tableEl.innerHTML = grouped.map(g => {
-        const names = Object.entries(g.nameQty)
-            .map(([name, qty]) => qty > 1 ? `${name} (x${qty})` : name)
-            .join(', ');
-        return `
-            <tr class="hover:bg-slate-50 transition-colors">
-                <td class="p-2 text-slate-700">
-                    ${g.drinkName}
-                    ${g.note ? `<span class="block text-xs text-slate-400 italic">"${g.note}"</span>` : ''}
-                </td>
-                <td class="p-2 text-slate-500">${names}</td>
-                <td class="p-2 text-center font-bold text-ocean-600">${g.qty}</td>
-                <td class="p-2 text-right font-bold text-slate-700">${formatMoney(g.price * g.qty)}</td>
+      </div>
+      <div class="table-scroll">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th style="width:20%">Loại xe</th>
+              <th style="width:16%">Mẫu xe</th>
+              <th style="width:12%">Loại pin</th>
+              <th style="width:16%">Hình thức KD</th>
+              <th style="width:18%">Giá niêm yết (đ)</th>
+              <th style="width:8%"></th>
             </tr>
-        `;
-    }).join('');
-    totalEl.textContent = formatMoney(total);
-}
+          </thead>
+          <tbody id="adminTableBody">
+            <tr><td colspan="6" class="loading-row">Đang tải dữ liệu…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
 
-function renderMonthlyChart(combinedStats) {
-    const stats = combinedStats || getCombinedDailyStats();
-    const year = document.getElementById('revenue-year').value;
-    const chartEl = document.getElementById('monthly-chart');
-    const months = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+    <div class="card">
+      <div class="admin-toolbar">
+        <p class="section-title" style="margin:0;"><span class="lbl">Cấu hình ưu đãi &amp; phí</span></p>
+        <button class="btn primary" id="btnSaveConfig">Lưu cấu hình</button>
+      </div>
+      <div class="cfg-grid" id="cfgGrid"></div>
+    </div>
 
-    const monthlyRevs = months.map((_, i) => {
-        const m = String(i + 1).padStart(2, '0');
-        const prefix = `${year}-${m}`;
-        return Object.entries(stats)
-            .filter(([d]) => d.startsWith(prefix))
-            .reduce((s, [, v]) => s + v.revenue, 0);
+  </div>
+</div>
+
+<div class="save-toast" id="saveToast">Đã lưu thay đổi</div>
+
+<footer>CHECK GIÁ XE ĐIỆN — dữ liệu quản lý được tại tab "Quản lý". Chỉ dùng để tham khảo nội bộ.</footer>
+
+<script type="module">
+  // ---------------------------------------------------------------
+  // Firebase — realtime shared storage (Firestore)
+  // ---------------------------------------------------------------
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+  import {
+    getFirestore, doc, getDoc, setDoc, onSnapshot
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDDBGaIUQViL8pwTxuOcXhh2uz1KArrLhI",
+    authDomain: "checkgia-3d81c.firebaseapp.com",
+    projectId: "checkgia-3d81c",
+    storageBucket: "checkgia-3d81c.firebasestorage.app",
+    messagingSenderId: "29982139392",
+    appId: "1:29982139392:web:3deb7253dc5292d22424e5"
+  };
+
+  const fbApp = initializeApp(firebaseConfig);
+  const db = getFirestore(fbApp);
+  const vehiclesDocRef = doc(db, 'checkgia', 'vehicles');
+  const configDocRef = doc(db, 'checkgia', 'config');
+
+  // ---------------------------------------------------------------
+  // Default data (used only the very first time — before anything
+  // has ever been saved to Firestore)
+  // ---------------------------------------------------------------
+  const DEFAULT_VEHICLES = [
+    { id: 1,  cat:"Xe không yêu cầu bằng lái", model:"Amio/Amio S",   battery:"1.0kWh", biz:"Kèm pin", price:11600000 },
+    { id: 2,  cat:"Xe không yêu cầu bằng lái", model:"Amio S2",       battery:"1.0kWh", biz:"Kèm pin", price:12000000 },
+    { id: 3,  cat:"Xe không yêu cầu bằng lái", model:"Zgoo",          battery:"1.2kWh", biz:"Kèm pin", price:13300000 },
+    { id: 4,  cat:"Xe không yêu cầu bằng lái", model:"Flazz",         battery:"1.2kWh", biz:"Kèm pin", price:14200000 },
+    { id: 5,  cat:"Xe không yêu cầu bằng lái", model:"Flazz Max",     battery:"1.5kWh", biz:"Thuê pin", price:12500000 },
+    { id: 6,  cat:"Xe không yêu cầu bằng lái", model:"Flazz Max",     battery:"1.5kWh", biz:"Kèm pin", price:17300000 },
+    { id: 7,  cat:"Xe không yêu cầu bằng lái", model:"Evo Lite",      battery:"1.5kWh", biz:"Thuê pin", price:14300000 },
+    { id: 8,  cat:"Xe không yêu cầu bằng lái", model:"Evo Lite",      battery:"1.5kWh", biz:"Kèm pin", price:18900000 },
+    { id: 9,  cat:"Xe không yêu cầu bằng lái", model:"Evo Grand Lite",battery:"1.2kWh", biz:"Kèm pin", price:16500000 },
+    { id: 10, cat:"Xe yêu cầu bằng lái", model:"Evo grand",  battery:"2.4kWh", biz:"Kèm pin", price:22500000 },
+    { id: 11, cat:"Xe yêu cầu bằng lái", model:"Feliz 2025", battery:"2.4kWh", biz:"Kèm pin", price:26000000 },
+    { id: 12, cat:"Xe yêu cầu bằng lái", model:"Evo",        battery:"1.5kWh", biz:"Thuê pin", price:18800000 },
+    { id: 13, cat:"Xe yêu cầu bằng lái", model:"Evo",        battery:"1.5kWh", biz:"Kèm pin", price:24100000 },
+    { id: 14, cat:"Xe yêu cầu bằng lái", model:"Feliz II",   battery:"1.5kWh", biz:"Thuê pin", price:23000000 },
+    { id: 15, cat:"Xe yêu cầu bằng lái", model:"Feliz II",   battery:"1.5kWh", biz:"Kèm pin", price:28700000 },
+    { id: 16, cat:"Xe yêu cầu bằng lái", model:"Viper",      battery:"1.5kWh", biz:"Thuê pin", price:35000000 },
+    { id: 17, cat:"Xe yêu cầu bằng lái", model:"Viper",      battery:"1.5kWh", biz:"Kèm pin", price:40600000 },
+    { id: 18, cat:"Xe yêu cầu bằng lái", model:"Kyo",        battery:"1.5kWh", biz:"Thuê pin", price:30000000 },
+    { id: 19, cat:"Xe yêu cầu bằng lái", model:"Kyo",        battery:"1.5kWh", biz:"Kèm pin", price:35300000 },
+    { id: 20, cat:"Xe yêu cầu bằng lái", model:"Kinet",      battery:"1.5kWh", biz:"Thuê pin", price:40000000 },
+    { id: 21, cat:"Xe yêu cầu bằng lái", model:"Kinet",      battery:"1.5kWh", biz:"Kèm pin 2 pin", price:49900000 },
+  ];
+
+  const DEFAULT_CONFIG = {
+    truocBaPercent: 2,        // % phí trước bạ được hỗ trợ
+    sepPercent: 5,            // % ưu đãi sếp Unis
+    vinfastNvPercent: 10,     // % ưu đãi VinFast cho NV Unis
+    bienSoFee: 200000,        // phí ra biển số (đ)
+    thuePinFreeAmount: 3600000, // miễn phí thuê pin năm đầu (đ)
+    thuePinPercent: 5,        // % giảm khi thuê pin >= 3 tháng
+    nguoiThanXeVinAmount: 2000000, // giảm cố định người thân đã có xe Vin
+    congAnPercent: 5,         // % giảm người thân Công an / Vnpost
+    hoSoSaiGon: 1500000,      // phí làm hồ sơ tại Sài Gòn
+    hoSoTinh: 1900000,        // phí làm hồ sơ tại tỉnh
+  };
+
+  const CONFIG_FIELDS = [
+    { key:'truocBaPercent',        label:'Phí trước bạ được hỗ trợ',                unit:'%' },
+    { key:'sepPercent',            label:'Ưu đãi sếp Unis',                          unit:'%' },
+    { key:'vinfastNvPercent',      label:'Ưu đãi VinFast cho NV Unis',               unit:'%' },
+    { key:'bienSoFee',             label:'Phí ra biển số',                           unit:'đ' },
+    { key:'thuePinFreeAmount',     label:'Miễn phí thuê pin năm đầu',                unit:'đ' },
+    { key:'thuePinPercent',        label:'Giảm khi thuê pin ≥ 3 tháng',              unit:'%' },
+    { key:'nguoiThanXeVinAmount',  label:'Giảm — người thân đã có xe Vin',           unit:'đ' },
+    { key:'congAnPercent',         label:'Giảm — người thân Công an / Vnpost',       unit:'%' },
+    { key:'hoSoSaiGon',            label:'Phí làm hồ sơ — Sài Gòn',                  unit:'đ' },
+    { key:'hoSoTinh',              label:'Phí làm hồ sơ — Tỉnh',                     unit:'đ' },
+  ];
+
+  let vehicles = [];
+  let config = {};
+  let nextId = 1;
+
+  const fmt = n => Math.round(n || 0).toLocaleString('vi-VN') + 'đ';
+
+  // ---------------------------------------------------------------
+  // Storage (Firestore — shared, realtime across everyone who opens
+  // this page)
+  // ---------------------------------------------------------------
+  async function loadState(){
+    try{
+      const snap = await getDoc(vehiclesDocRef);
+      if (snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length){
+        vehicles = snap.data().list;
+      } else {
+        vehicles = DEFAULT_VEHICLES.map(x => ({...x}));
+        await setDoc(vehiclesDocRef, { list: vehicles });
+      }
+    }catch(e){
+      console.error('Firestore load (vehicles) failed:', e);
+      vehicles = DEFAULT_VEHICLES.map(x => ({...x}));
+    }
+    try{
+      const snap = await getDoc(configDocRef);
+      if (snap.exists()){
+        config = { ...DEFAULT_CONFIG, ...snap.data() };
+      } else {
+        config = { ...DEFAULT_CONFIG };
+        await setDoc(configDocRef, config);
+      }
+    }catch(e){
+      console.error('Firestore load (config) failed:', e);
+      config = { ...DEFAULT_CONFIG };
+    }
+    nextId = vehicles.reduce((m, v) => Math.max(m, v.id||0), 0) + 1;
+  }
+
+  async function saveVehicles(){
+    try{
+      await setDoc(vehiclesDocRef, { list: vehicles });
+      showToast('Đã lưu bảng giá');
+    }catch(e){
+      console.error('Firestore save (vehicles) failed:', e);
+      showToast('Lưu thất bại — kiểm tra Firestore rules', true);
+    }
+  }
+
+  async function saveConfig(){
+    try{
+      await setDoc(configDocRef, config);
+      showToast('Đã lưu cấu hình');
+    }catch(e){
+      console.error('Firestore save (config) failed:', e);
+      showToast('Lưu thất bại — kiểm tra Firestore rules', true);
+    }
+  }
+
+  // Live sync: reflect changes made by anyone else, on any device,
+  // without needing to reload the page.
+  function attachRealtimeSync(){
+    onSnapshot(vehiclesDocRef, snap => {
+      if (!snap.exists()) return;
+      const list = snap.data().list;
+      if (!Array.isArray(list)) return;
+      vehicles = list;
+      nextId = vehicles.reduce((m, v) => Math.max(m, v.id||0), 0) + 1;
+      populateCategories();
+      render();
+      if (document.getElementById('view-admin').classList.contains('active')) renderAdminTable();
+    }, err => console.error('Firestore listen (vehicles) failed:', err));
+
+    onSnapshot(configDocRef, snap => {
+      if (!snap.exists()) return;
+      config = { ...DEFAULT_CONFIG, ...snap.data() };
+      refreshConfigLabels();
+      render();
+      if (document.getElementById('view-admin').classList.contains('active')) renderConfigForm();
+    }, err => console.error('Firestore listen (config) failed:', err));
+  }
+
+  let toastTimer = null;
+  function showToast(msg, isError){
+    const t = document.getElementById('saveToast');
+    t.textContent = msg;
+    t.style.background = isError ? 'var(--red)' : 'var(--accent)';
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+  }
+
+  // ---------------------------------------------------------------
+  // Tabs
+  // ---------------------------------------------------------------
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('view-' + btn.dataset.tab).classList.add('active');
+      if (btn.dataset.tab === 'admin') renderAdminTable();
     });
+  });
 
-    const max = Math.max(...monthlyRevs, 1);
-    const now = new Date();
+  // ---------------------------------------------------------------
+  // CHECK GIÁ tab
+  // ---------------------------------------------------------------
+  const selCategory = document.getElementById('selCategory');
+  const selModel = document.getElementById('selModel');
+  const listPriceEl = document.getElementById('listPrice');
+  const batteryGroup = document.getElementById('batteryGroup');
+  const breakdownEl = document.getElementById('breakdown');
+  const odometerEl = document.getElementById('odometer');
+  const savingsTextEl = document.getElementById('savingsText');
+  const chkFamily = document.getElementById('chkFamily');
+  const chkPolice = document.getElementById('chkPolice');
 
-    chartEl.innerHTML = months.map((m, i) => {
-        const rev = monthlyRevs[i];
-        const pct = Math.round((rev / max) * 100);
-        const isCurrentMonth = parseInt(year) === now.getFullYear() && i === now.getMonth();
-        return `
-            <div class="flex items-center gap-3">
-                <span class="text-xs font-bold text-slate-400 w-6 text-right">${m}</span>
-                <div class="flex-1 bg-slate-100 rounded-full h-5 relative overflow-hidden">
-                    <div class="h-full rounded-full transition-all duration-500 ${isCurrentMonth ? 'bg-ocean-500' : 'bg-ocean-200'}"
-                        style="width:${pct}%"></div>
-                </div>
-                <span class="text-xs font-bold ${rev > 0 ? 'text-slate-700' : 'text-slate-300'} w-20 text-right">${rev > 0 ? formatMoney(rev) : '—'}</span>
-            </div>
-        `;
-    }).join('');
-}
+  function populateCategories(){
+    const prevCat = selCategory.value;
+    selCategory.innerHTML = '';
+    const categories = [...new Set(vehicles.map(v => v.cat))];
+    categories.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c; opt.textContent = c;
+      selCategory.appendChild(opt);
+    });
+    if (categories.includes(prevCat)) selCategory.value = prevCat;
+    populateModels();
+  }
 
-// =====================================================
-// ADMIN: QUẢN LÝ MENU
-// =====================================================
-function renderMenuTable() {
-    const search = (document.getElementById('menu-search')?.value || '').toLowerCase();
-    const filterCat = document.getElementById('menu-filter-cat')?.value || '';
-    const tbody = document.getElementById('admin-menu-table');
+  function populateModels(){
+    const prevModel = selModel.value;
+    selModel.innerHTML = '';
+    const cat = selCategory.value;
+    vehicles.filter(v => v.cat === cat).forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v.id;
+      opt.textContent = `${v.model} — ${v.battery} — ${v.biz} — ${fmt(v.price)}`;
+      selModel.appendChild(opt);
+    });
+    const stillExists = [...selModel.options].some(o => o.value === prevModel);
+    if (stillExists) selModel.value = prevModel;
+  }
 
-    // Cập nhật datalist
-    const cats = [...new Set(menu.map(d => d.cat))];
-    document.getElementById('menu-filter-cat').innerHTML =
-        `<option value="">Tất cả loại</option>` +
-        cats.map(c => `<option value="${c}">${c}</option>`).join('');
+  function currentVehicle(){
+    return vehicles.find(v => String(v.id) === String(selModel.value));
+  }
 
-    const filtered = menu.filter(d =>
-        (!filterCat || d.cat === filterCat) &&
-        (!search || d.name.toLowerCase().includes(search) || d.cat.toLowerCase().includes(search))
-    );
+  function pillSync(groupId){
+    document.querySelectorAll(`#${groupId} .pill`).forEach(p => {
+      const input = p.querySelector('input');
+      p.classList.toggle('checked', input.checked);
+    });
+  }
 
-    if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" class="py-8 text-center text-slate-300 text-sm">Không tìm thấy món</td></tr>`;
-        return;
+  function refreshConfigLabels(){
+    document.getElementById('batteryFreeLabel').textContent = `Giảm cố định ${fmt(config.thuePinFreeAmount)}`;
+    document.getElementById('batteryPercentLabel').textContent = `Giảm ${config.thuePinPercent}% nếu thuê pin từ 3 tháng trở lên`;
+    document.getElementById('feeSgLabel').textContent = fmt(config.hoSoSaiGon);
+    document.getElementById('feeTinhLabel').textContent = fmt(config.hoSoTinh);
+  }
+
+  function render(){
+    const v = currentVehicle();
+    if (!v) { breakdownEl.innerHTML = '<div class="loading-row">Chưa có xe nào — thêm ở tab Quản lý.</div>'; return; }
+
+    listPriceEl.textContent = fmt(v.price);
+
+    const isThuePin = v.biz.toLowerCase().includes('thuê pin');
+    batteryGroup.style.display = isThuePin ? '' : 'none';
+
+    const batteryChoice = document.querySelector('input[name="battery"]:checked').value;
+    const feeChoice = document.querySelector('input[name="fee"]:checked').value;
+
+    const truocBaAmt = v.price * (config.truocBaPercent/100);
+    const unisAmt = v.price * ((config.sepPercent + config.vinfastNvPercent)/100);
+
+    let thuePinDiscount = 0;
+    let thuePinLabel = 'Không áp dụng';
+    if (isThuePin && batteryChoice === 'free'){
+      thuePinDiscount = config.thuePinFreeAmount;
+      thuePinLabel = `−${fmt(thuePinDiscount)} (miễn phí năm đầu)`;
+    } else if (isThuePin && batteryChoice === 'percent'){
+      thuePinDiscount = v.price * (config.thuePinPercent/100);
+      thuePinLabel = `−${fmt(thuePinDiscount)} (−${config.thuePinPercent}%, thuê ≥3 tháng)`;
     }
 
-    tbody.innerHTML = filtered.map((d, i) => {
-        const realIndex = menu.indexOf(d);
-        return `
-        <tr class="hover:bg-slate-50 transition-colors">
-            <td class="p-2.5">
-                <span class="bg-ocean-50 text-ocean-700 text-xs font-bold px-2 py-0.5 rounded-full">${d.cat}</span>
-            </td>
-            <td class="p-2.5 font-medium text-slate-700">${d.name}</td>
-            <td class="p-2.5 text-right font-bold text-slate-800">${d.price}k</td>
-            <td class="p-2.5 text-center">
-                <button onclick="editDrink(${realIndex})" class="text-ocean-500 hover:text-ocean-700 font-bold text-xs px-2 py-1 rounded hover:bg-ocean-50 mr-1">Sửa</button>
-                <button onclick="deleteDrink(${realIndex})" class="text-rose-400 hover:text-rose-600 font-bold text-xs px-2 py-1 rounded hover:bg-rose-50">Xóa</button>
-            </td>
-        </tr>
-    `}).join('');
-}
+    const nguoiThanXeVinAmt = chkFamily.checked ? config.nguoiThanXeVinAmount : 0;
+    const congAnAmt = chkPolice.checked ? v.price * (config.congAnPercent/100) : 0;
 
-function populateCatSuggestions() {
-    const dl = document.getElementById('cat-suggestions');
-    if (!dl) return;
-    const cats = [...new Set(menu.map(d => d.cat))];
-    dl.innerHTML = cats.map(c => `<option value="${c}">`).join('');
-}
+    const bienSoFee = config.bienSoFee;
+    const hoSoFee = feeChoice === 'sg' ? config.hoSoSaiGon : config.hoSoTinh;
+    const hoSoLabel = feeChoice === 'sg' ? 'Sài Gòn' : 'Tỉnh';
 
-function openAddDrinkModal() {
-    document.getElementById('drink-modal-title').textContent = 'Thêm Món Mới';
-    document.getElementById('edit-drink-index').value = '';
-    document.getElementById('modal-drink-cat').value = '';
-    document.getElementById('modal-drink-name').value = '';
-    document.getElementById('modal-drink-price').value = '';
-    populateCatSuggestions();
-    document.getElementById('drink-modal').classList.remove('hidden');
-}
+    const giaSauUuDai = v.price - truocBaAmt - unisAmt - thuePinDiscount - nguoiThanXeVinAmt - congAnAmt + bienSoFee + hoSoFee;
+    const savings = v.price - giaSauUuDai + bienSoFee + hoSoFee; // pure discount savings vs list price
 
-function editDrink(i) {
-    const d = menu[i];
-    document.getElementById('drink-modal-title').textContent = 'Sửa Món';
-    document.getElementById('edit-drink-index').value = i;
-    document.getElementById('modal-drink-cat').value = d.cat;
-    document.getElementById('modal-drink-name').value = d.name;
-    document.getElementById('modal-drink-price').value = d.price;
-    populateCatSuggestions();
-    document.getElementById('drink-modal').classList.remove('hidden');
-}
+    const rows = [
+      { k: 'Loại xe', v: `${v.cat} · ${v.model}`, cls: 'info' },
+      { k: 'Giá niêm yết', v: fmt(v.price), cls: 'info' },
+      { k: 'Phí trước bạ (được hỗ trợ)', v: `−${fmt(truocBaAmt)} (−${config.truocBaPercent}%)`, cls: 'pos' },
+      { k: `Ưu đãi Unis (sếp + NV VinFast)`, v: `−${fmt(unisAmt)} (−${config.sepPercent+config.vinfastNvPercent}%)`, cls: 'pos' },
+      { k: 'Phí ra biển số', v: `+${fmt(bienSoFee)}`, cls: 'neg' },
+      { k: 'Phí thuê pin (ưu đãi)', v: thuePinDiscount ? `−${fmt(thuePinDiscount)}` : thuePinLabel, cls: thuePinDiscount ? 'pos' : 'info' },
+      { k: 'Người thân đã có xe Vin', v: nguoiThanXeVinAmt ? `−${fmt(nguoiThanXeVinAmt)}` : 'Không áp dụng', cls: nguoiThanXeVinAmt ? 'pos' : 'info' },
+      { k: 'Người thân Công an / Vnpost', v: congAnAmt ? `−${fmt(congAnAmt)} (−${config.congAnPercent}%)` : 'Không áp dụng', cls: congAnAmt ? 'pos' : 'info' },
+      { k: `Phí làm hồ sơ (${hoSoLabel})`, v: `+${fmt(hoSoFee)}`, cls: 'neg' },
+      { k: 'Giá sau ưu đãi', v: fmt(giaSauUuDai), cls: 'info', subtotal: true },
+    ];
 
-function saveDrink() {
-    const cat = document.getElementById('modal-drink-cat').value.trim();
-    const name = document.getElementById('modal-drink-name').value.trim();
-    const price = parseInt(document.getElementById('modal-drink-price').value);
-    if (!cat || !name || !price) { alert('Vui lòng điền đầy đủ thông tin!'); return; }
+    breakdownEl.innerHTML = rows.map(r => `
+      <div class="b-row ${r.subtotal ? 'subtotal' : ''}">
+        <span class="k">${r.k}</span>
+        <span class="v ${r.cls || ''}">${r.v}</span>
+      </div>
+    `).join('');
 
-    const idx = document.getElementById('edit-drink-index').value;
-    if (idx === '') {
-        menu.push({ cat, name, price });
-    } else {
-        menu[parseInt(idx)] = { cat, name, price };
+    animateOdometer(giaSauUuDai);
+    savingsTextEl.textContent = `Tiết kiệm ${fmt(v.price - (v.price - truocBaAmt - unisAmt - thuePinDiscount - nguoiThanXeVinAmt - congAnAmt))} so với giá niêm yết`;
+  }
+
+  let currentDisplay = 0;
+  let animFrame = null;
+  function animateOdometer(target){
+    if (animFrame) cancelAnimationFrame(animFrame);
+    const start = currentDisplay;
+    const startTime = performance.now();
+    const duration = 450;
+    function step(now){
+      const t = Math.min(1, (now - startTime) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      currentDisplay = start + (target - start) * eased;
+      odometerEl.innerHTML = Math.round(currentDisplay).toLocaleString('vi-VN') + '<span class="unit">đ</span>';
+      if (t < 1) animFrame = requestAnimationFrame(step);
+      else currentDisplay = target;
     }
+    animFrame = requestAnimationFrame(step);
+  }
 
-    if (window.FIREBASE_READY) window.fbSet(window.fbRef(window.db, 'menu'), menu);
-    initMenuDropdowns();
-    renderMenuTable();
-    closeDrinkModal();
-}
+  selCategory.addEventListener('change', () => { populateModels(); render(); });
+  selModel.addEventListener('change', render);
+  chkFamily.addEventListener('change', render);
+  chkPolice.addEventListener('change', render);
+  document.querySelectorAll('input[name="battery"]').forEach(r => r.addEventListener('change', () => { pillSync('batteryOptions'); render(); }));
+  document.querySelectorAll('input[name="fee"]').forEach(r => r.addEventListener('change', () => { pillSync('feeOptions'); render(); }));
 
-function deleteDrink(i) {
-    if (!confirm(`Xóa món "${menu[i].name}"?`)) return;
-    menu.splice(i, 1);
-    if (window.FIREBASE_READY) window.fbSet(window.fbRef(window.db, 'menu'), menu);
-    initMenuDropdowns();
-    renderMenuTable();
-}
+  // ---------------------------------------------------------------
+  // QUẢN LÝ tab — vehicle table
+  // ---------------------------------------------------------------
+  const adminTableBody = document.getElementById('adminTableBody');
 
-function closeDrinkModal() {
-    document.getElementById('drink-modal').classList.add('hidden');
-}
+  function renderAdminTable(){
+    if (!vehicles.length){
+      adminTableBody.innerHTML = '<tr><td colspan="6" class="loading-row">Chưa có xe nào.</td></tr>';
+      return;
+    }
+    adminTableBody.innerHTML = vehicles.map((v, i) => `
+      <tr data-id="${v.id}">
+        <td><input type="text" class="f-cat" value="${escapeAttr(v.cat)}"></td>
+        <td><input type="text" class="f-model" value="${escapeAttr(v.model)}"></td>
+        <td><input type="text" class="f-battery" value="${escapeAttr(v.battery)}"></td>
+        <td><input type="text" class="f-biz" value="${escapeAttr(v.biz)}"></td>
+        <td><input type="number" class="f-price" value="${v.price}" step="100000"></td>
+        <td><button class="btn danger small" data-action="delete">Xóa</button></td>
+      </tr>
+    `).join('');
 
-// =====================================================
-// HELPERS
-// =====================================================
-function formatMoney(k) {
-    if (!k) return '0đ';
-    return (k * 1000).toLocaleString('vi-VN') + 'đ';
-}
+    adminTableBody.querySelectorAll('tr').forEach(tr => {
+      const id = tr.dataset.id;
+      const veh = vehicles.find(v => String(v.id) === id);
+      tr.querySelector('.f-cat').addEventListener('input', e => veh.cat = e.target.value);
+      tr.querySelector('.f-model').addEventListener('input', e => veh.model = e.target.value);
+      tr.querySelector('.f-battery').addEventListener('input', e => veh.battery = e.target.value);
+      tr.querySelector('.f-biz').addEventListener('input', e => veh.biz = e.target.value);
+      tr.querySelector('.f-price').addEventListener('input', e => veh.price = parseInt(e.target.value, 10) || 0);
+      tr.querySelector('[data-action="delete"]').addEventListener('click', () => {
+        vehicles = vehicles.filter(v => String(v.id) !== id);
+        renderAdminTable();
+      });
+    });
+  }
 
-// Đóng modal khi click backdrop
-document.getElementById('success-modal').addEventListener('click', function(e) {
-    if (e.target === this) closeSuccessModal();
-});
-document.getElementById('drink-modal').addEventListener('click', function(e) {
-    if (e.target === this) closeDrinkModal();
-});
+  function escapeAttr(s){
+    return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  }
+
+  document.getElementById('btnAddRow').addEventListener('click', () => {
+    vehicles.push({ id: nextId++, cat: 'Xe không yêu cầu bằng lái', model: 'Mẫu mới', battery: '1.0kWh', biz: 'Kèm pin', price: 0 });
+    renderAdminTable();
+  });
+
+  document.getElementById('btnSaveVehicles').addEventListener('click', async () => {
+    await saveVehicles();
+    populateCategories();
+    render();
+  });
+
+  // ---------------------------------------------------------------
+  // QUẢN LÝ tab — config
+  // ---------------------------------------------------------------
+  const cfgGrid = document.getElementById('cfgGrid');
+
+  function renderConfigForm(){
+    cfgGrid.innerHTML = CONFIG_FIELDS.map(f => `
+      <div class="cfg-field">
+        <label>${f.label}</label>
+        <div class="inp-row">
+          <input type="number" data-key="${f.key}" value="${config[f.key]}">
+          <span class="unit">${f.unit}</span>
+        </div>
+      </div>
+    `).join('');
+
+    cfgGrid.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('input', () => {
+        config[inp.dataset.key] = parseFloat(inp.value) || 0;
+      });
+    });
+  }
+
+  document.getElementById('btnSaveConfig').addEventListener('click', async () => {
+    await saveConfig();
+    refreshConfigLabels();
+    render();
+  });
+
+  // ---------------------------------------------------------------
+  // Init
+  // ---------------------------------------------------------------
+  (async function init(){
+    await loadState();
+    populateCategories();
+    pillSync('batteryOptions');
+    pillSync('feeOptions');
+    refreshConfigLabels();
+    renderConfigForm();
+    render();
+    attachRealtimeSync();
+  })();
 </script>
+
 </body>
 </html>
