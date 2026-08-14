@@ -528,24 +528,48 @@
   // ---------------------------------------------------------------
   // Firebase — realtime shared storage (Firestore)
   // ---------------------------------------------------------------
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
-  import {
-    getFirestore, doc, getDoc, setDoc, onSnapshot
-  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+  // NOTE: these were previously static `import` statements at the top
+  // of the module. If the browser can't reach www.gstatic.com for any
+  // reason (blocked network/proxy, ad-blocker, offline, opened as a
+  // local file in a strict browser, etc.), a static import failure
+  // aborts the ENTIRE module — none of the code below it runs, so the
+  // <select> dropdowns stay empty and nothing can be chosen. Loading
+  // Firebase dynamically and catching failures means the page still
+  // works locally (with default data) even when Firebase is unreachable.
+  let getDoc, setDoc, onSnapshot, vehiclesDocRef, configDocRef;
+  let firebaseReady = false;
 
-  const firebaseConfig = {
-    apiKey: "AIzaSyDDBGaIUQViL8pwTxuOcXhh2uz1KArrLhI",
-    authDomain: "checkgia-3d81c.firebaseapp.com",
-    projectId: "checkgia-3d81c",
-    storageBucket: "checkgia-3d81c.firebasestorage.app",
-    messagingSenderId: "29982139392",
-    appId: "1:29982139392:web:3deb7253dc5292d22424e5"
-  };
+  async function initFirebase(){
+    try{
+      const [{ initializeApp }, firestoreMod] = await Promise.all([
+        import("https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js"),
+        import("https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js")
+      ]);
+      const getFirestore = firestoreMod.getFirestore;
+      const doc = firestoreMod.doc;
+      getDoc = firestoreMod.getDoc;
+      setDoc = firestoreMod.setDoc;
+      onSnapshot = firestoreMod.onSnapshot;
 
-  const fbApp = initializeApp(firebaseConfig);
-  const db = getFirestore(fbApp);
-  const vehiclesDocRef = doc(db, 'checkgia', 'vehicles');
-  const configDocRef = doc(db, 'checkgia', 'config');
+      const firebaseConfig = {
+        apiKey: "AIzaSyDDBGaIUQViL8pwTxuOcXhh2uz1KArrLhI",
+        authDomain: "checkgia-3d81c.firebaseapp.com",
+        projectId: "checkgia-3d81c",
+        storageBucket: "checkgia-3d81c.firebasestorage.app",
+        messagingSenderId: "29982139392",
+        appId: "1:29982139392:web:3deb7253dc5292d22424e5"
+      };
+
+      const fbApp = initializeApp(firebaseConfig);
+      const db = getFirestore(fbApp);
+      vehiclesDocRef = doc(db, 'checkgia', 'vehicles');
+      configDocRef = doc(db, 'checkgia', 'config');
+      firebaseReady = true;
+    }catch(e){
+      console.error('Firebase failed to load — continuing with local data only:', e);
+      firebaseReady = false;
+    }
+  }
 
   // ---------------------------------------------------------------
   // Default data (used only the very first time — before anything
@@ -612,6 +636,12 @@
   // this page)
   // ---------------------------------------------------------------
   async function loadState(){
+    if (!firebaseReady){
+      vehicles = DEFAULT_VEHICLES.map(x => ({...x}));
+      config = { ...DEFAULT_CONFIG };
+      nextId = vehicles.reduce((m, v) => Math.max(m, v.id||0), 0) + 1;
+      return;
+    }
     try{
       const snap = await getDoc(vehiclesDocRef);
       if (snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length){
@@ -640,6 +670,10 @@
   }
 
   async function saveVehicles(){
+    if (!firebaseReady){
+      showToast('Không kết nối được Firebase — thay đổi chỉ lưu tạm trên máy này', true);
+      return;
+    }
     try{
       await setDoc(vehiclesDocRef, { list: vehicles });
       showToast('Đã lưu bảng giá');
@@ -650,6 +684,10 @@
   }
 
   async function saveConfig(){
+    if (!firebaseReady){
+      showToast('Không kết nối được Firebase — thay đổi chỉ lưu tạm trên máy này', true);
+      return;
+    }
     try{
       await setDoc(configDocRef, config);
       showToast('Đã lưu cấu hình');
@@ -662,6 +700,7 @@
   // Live sync: reflect changes made by anyone else, on any device,
   // without needing to reload the page.
   function attachRealtimeSync(){
+    if (!firebaseReady) return;
     onSnapshot(vehiclesDocRef, snap => {
       if (!snap.exists()) return;
       const list = snap.data().list;
@@ -931,14 +970,32 @@
   // Init
   // ---------------------------------------------------------------
   (async function init(){
-    await loadState();
+    // 1) Show local default data immediately so the dropdowns are
+    //    always selectable, even before (or without) Firebase.
+    vehicles = DEFAULT_VEHICLES.map(x => ({...x}));
+    config = { ...DEFAULT_CONFIG };
+    nextId = vehicles.reduce((m, v) => Math.max(m, v.id||0), 0) + 1;
     populateCategories();
     pillSync('batteryOptions');
     pillSync('feeOptions');
     refreshConfigLabels();
     renderConfigForm();
     render();
-    attachRealtimeSync();
+
+    // 2) Try to connect to Firebase and load/sync the shared data.
+    //    If this fails (blocked network, offline, etc.) the page keeps
+    //    working with the local defaults shown above.
+    await initFirebase();
+    if (firebaseReady){
+      await loadState();
+      populateCategories();
+      refreshConfigLabels();
+      renderConfigForm();
+      render();
+      attachRealtimeSync();
+    } else {
+      showToast('Không kết nối được Firebase — đang dùng dữ liệu mặc định', true);
+    }
   })();
 </script>
 
